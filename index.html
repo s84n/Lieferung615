@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lieferung615</title>
+  <meta name="description" content="Lieferung615 – das Liefer-Arcade von Gienger &amp; Renz Haustechnik" />
+  <link rel="icon" href="logo.png" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="fx-layer"></div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-tl">
+      <div class="panel score-panel">
+        <img src="logo.png" alt="Gienger &amp; Renz" class="hud-logo" />
+        <div class="score-wrap">
+          <div class="label">Punkte</div>
+          <div id="score">0</div>
+        </div>
+        <div id="combo" class="combo"></div>
+      </div>
+      <div id="orders" class="orders"></div>
+    </div>
+    <div class="hud-timer panel" id="timer-panel">
+      <div class="label">Feierabend in</div>
+      <div id="timer">3:00</div>
+      <div id="clock">06:30 Uhr</div>
+    </div>
+    <div class="hud-tr">
+      <div class="minimap-wrap"><canvas id="minimap" width="440" height="440"></canvas></div>
+    </div>
+    <div class="hud-bl panel">
+      <div class="label">Ladefläche</div>
+      <div id="cargo" class="slots"></div>
+    </div>
+    <div id="powerups" class="hud-powerups"></div>
+    <div class="hud-br panel">
+      <div class="gearbox"><div id="gear">N</div><div class="label">Gang</div></div>
+      <div class="spd"><div id="speed">0</div><div class="label">km/h</div></div>
+      <div class="rpm"><i id="rpm-bar"></i><span>× 1000 U/min</span></div>
+    </div>
+    <div id="nav-arrow"><svg viewBox="0 0 40 40"><path d="M20 3 L35 34 L20 26 L5 34 Z" /></svg></div>
+    <div id="toast"></div>
+  </div>
+  <div id="countdown"></div>
+
+  <!-- Titel -->
+  <section id="screen-title" class="screen">
+    <div class="title-left">
+      <img src="logo.png" alt="Gienger &amp; Renz Haustechnik" class="title-logo" />
+      <h1 class="game-title"><span>Lieferung</span><em>615</em></h1>
+      <p class="tagline">Das Liefer-Arcade für echte Profis aus Sanitär, Heizung &amp; Klima</p>
+      <div class="press">ENTER drücken zum Starten</div>
+      <div id="tour-id" class="tour-id"></div>
+    </div>
+    <div class="title-right panel board">
+      <h2>🏆 Bestenliste</h2>
+      <ol id="title-board" class="board-list"></ol>
+    </div>
+    <div class="footer-hint">O = Einstellungen · M = Ton an/aus · F = Vollbild</div>
+  </section>
+
+  <!-- Tutorial -->
+  <section id="screen-tutorial" class="screen hidden">
+    <div class="panel tutorial">
+      <h2>So geht's</h2>
+      <div class="tut-grid">
+        <div class="tut-card">
+          <div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>oder</span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></div>
+          <p><b>Fahren</b> · <kbd class="sm">Leertaste</kbd> Handbremse / Drift · <kbd class="sm">H</kbd> Hupe</p>
+        </div>
+        <div class="tut-card">
+          <div class="ring gold"></div>
+          <p><b>Abholen:</b> Im <span class="c-gold">gelben Ring</span> am G&amp;R-Lager kurz anhalten. Die Ladefläche hat <b>3 Plätze</b>.</p>
+        </div>
+        <div class="tut-card">
+          <div class="ring green"></div>
+          <p><b>Ausliefern:</b> Im <span class="c-green">grünen Ring</span> beim Kunden anhalten. Je schneller, desto mehr Bonus. Lieferserien geben einen <b>Combo-Multiplikator</b>.</p>
+        </div>
+        <div class="tut-card">
+          <div class="pu-row"><span>☕</span><span>🧭</span><span>⏱️</span></div>
+          <p><b>Power-Ups:</b> Kaffee = Turbo · Navi = Route zum Ziel · Uhr = +10 Sekunden</p>
+        </div>
+        <div class="tut-card">
+          <div class="pu-row"><span>🚨</span><span>🅿️</span></div>
+          <p><b>Notfälle</b> zählen doppelt, aber nur innerhalb der Zeit! <b>Rückwärts andocken</b> (Heck zur Rampe) bringt +40.</p>
+        </div>
+        <div class="tut-card">
+          <div class="pu-row"><span>🚽</span><span>🛁</span></div>
+          <p><b>Zerbrechlich:</b> Keramik und Kessel leiden bei Remplern. <b>Sperrig:</b> Badewanne und Wärmepumpe brauchen 2 Plätze.</p>
+        </div>
+        <div class="tut-card wide">
+          <p>⚠️ Straßensperren wechseln, Verkehr nicht rammen (−25), Leitkegel umfahren (−10). Du hast einen Arbeitstag (<b>3 Minuten</b>) bis zum Feierabend: Wer wird Obermeister?</p>
+        </div>
+      </div>
+      <div class="press">ENTER = Los geht's!</div>
+    </div>
+  </section>
+
+  <!-- Ergebnis -->
+  <section id="screen-results" class="screen hidden">
+    <div class="panel results">
+      <h2>Feierabend! 🍺</h2>
+      <div class="final-score"><span id="res-score">0</span><small>Punkte</small></div>
+      <div id="res-title" class="rank-title"></div>
+      <div class="stats six">
+        <div><b id="res-deliveries">0</b><span>Lieferungen</span></div>
+        <div><b id="res-urgent">0</b><span>Notfälle</span></div>
+        <div><b id="res-docks">0</b><span>Angedockt</span></div>
+        <div><b id="res-combo">x1</b><span>beste Combo</span></div>
+        <div><b id="res-crashes">0</b><span>Rempler</span></div>
+        <div><b id="res-rank">–</b><span>Platz</span></div>
+      </div>
+      <div id="name-entry" class="name-entry">
+        <label for="name-input">Dein Name für die Bestenliste:</label>
+        <input id="name-input" maxlength="12" autocomplete="off" spellcheck="false" placeholder="NAME" />
+        <div class="hint">ENTER = Speichern</div>
+      </div>
+      <div id="res-board-wrap" class="hidden">
+        <ol id="res-board" class="board-list"></ol>
+        <div class="press">ENTER = Zurück zum Start</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Einstellungen -->
+  <button id="settings-btn" class="panel" title="Einstellungen (O)" aria-label="Einstellungen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.6 4.9-1.9-.4a7 7 0 0 1-.6 1.5l1.1 1.6-1.6 1.6-1.6-1.1c-.5.3-1 .5-1.5.6l-.4 1.9h-2.2l-.4-1.9a7 7 0 0 1-1.5-.6l-1.6 1.1-1.6-1.6 1.1-1.6a7 7 0 0 1-.6-1.5l-1.9-.4v-2.2l1.9-.4c.1-.5.3-1 .6-1.5L5.3 7.4 6.9 5.8l1.6 1.1c.5-.3 1-.5 1.5-.6l.4-1.9h2.2l.4 1.9c.5.1 1 .3 1.5.6l1.6-1.1 1.6 1.6-1.1 1.6c.3.5.5 1 .6 1.5l1.9.4v2.2Z"/></svg>
+    <kbd class="sm">O</kbd>
+  </button>
+  <div id="settings" class="panel hidden" role="dialog" aria-label="Einstellungen">
+    <div class="settings-head"><h3>Einstellungen</h3><button id="settings-close" aria-label="Schließen">✕</button></div>
+    <ul id="settings-list"></ul>
+    <p class="settings-hint">↑ ↓ wählen · ← → ändern · <b>O</b> / <b>Esc</b> schließen</p>
+  </div>
+
+  <div id="loading"><img src="logo.png" alt="" /><div class="bar"><i></i></div><p>Lade Miniaturstadt …</p></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
