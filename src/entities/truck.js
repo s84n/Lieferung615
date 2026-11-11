@@ -58,10 +58,6 @@ export function buildTruckModel(skin = SKINS[0]) {
   put(body, shadowed(new THREE.Mesh(RB(1.75, 0.22, 0.25, 0.08, 2), chrome)), 0, 0.6, 1.85);
   // Gold-Streifen
   put(body, new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.08, 1.0), gold), 0, 0.92, 1.3);
-  // Rundumleuchte
-  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.14, 12), new THREE.MeshStandardMaterial({ color: '#ffb000', emissive: '#ff9000', emissiveIntensity: 1.4 }));
-  beacon.position.set(0, 2.03, 1.25);
-  body.add(beacon);
 
   // Scheinwerfer + Rücklichter (emissiv -> Bloom)
   const headMat = new THREE.MeshStandardMaterial({ color: '#fff8e0', emissive: '#fff2c0', emissiveIntensity: 1.5 });
@@ -113,7 +109,7 @@ export function buildTruckModel(skin = SKINS[0]) {
     wheels.push(w);
   }
 
-  root.userData = { body, wheels, tailMat, headMat, beacon, skin: skin.id };
+  root.userData = { body, wheels, tailMat, headMat, skin: skin.id };
   return root;
 }
 
@@ -263,7 +259,6 @@ export class Truck {
       w.rotation.y = w.userData.front ? this.steer : 0;
       w.rotation.order = 'YXZ';
     }
-    if (this.ud.beacon) this.ud.beacon.rotation.y += dt * 8;
   }
 
   // Weltpositionen der Hinterräder (für Bremsspuren)
