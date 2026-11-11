@@ -1,4 +1,5 @@
-// Prozedurale Sounds + Synth-Musik über die Web Audio API (keine externen Dateien)
+// Prozedurale Sounds + Synth-Musik über die Web Audio API, dazu der Soundtrack
+import TRACK_URL from '../assets/soundtrack.mp3?url'; // Vite hängt einen Hash an -> kein veralteter Cache
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
 const CHORDS = [
@@ -16,7 +17,6 @@ const MELODY = [
 const BASS_STEPS = [0, 3, 6, 8, 10, 11, 14];
 const ARP = [0, 1, 2, 3, 2, 1, 2, 3, 0, 1, 2, 3, 2, 3, 1, 2];
 
-const TRACK_URL = 'Lieferung615.mp3';
 const SETTINGS_KEY = 'lieferung615.settings.v1';
 const DEFAULTS = { music: 0.6, sfx: 0.85, engine: 0.8, muted: false };
 
