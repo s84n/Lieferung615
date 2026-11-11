@@ -139,7 +139,13 @@ export class GameAudio {
     this.turboG = ctx.createGain(); this.turboG.gain.value = 0;
     this.turbo.connect(this.turboG).connect(this.engBus);
 
-    for (const o of [this.engMain, this.engSub, this.engLfo, this.engNoise, this.turbo]) o.start();
+    // Reifenquietschen: schmalbandiges Rauschen, leicht wabernd
+    this.squeal = ctx.createBufferSource(); this.squeal.buffer = this.noise; this.squeal.loop = true;
+    this.squealF = ctx.createBiquadFilter(); this.squealF.type = 'bandpass'; this.squealF.frequency.value = 1700; this.squealF.Q.value = 9;
+    this.squealG = ctx.createGain(); this.squealG.gain.value = 0;
+    this.squeal.connect(this.squealF).connect(this.squealG).connect(this.sfx);
+
+    for (const o of [this.engMain, this.engSub, this.engLfo, this.engNoise, this.turbo, this.squeal]) o.start();
     this.eng = { spool: 0, last: ctx.currentTime, wasMoving: false, beepT: 0 };
   }
 
@@ -241,6 +247,13 @@ export class GameAudio {
     this.turbo.frequency.setTargetAtTime(1600 + E.spool * 2600, t, 0.1);
     this.turboG.gain.setTargetAtTime(active ? E.spool * 0.012 : 0, t, 0.1);
 
+    // Handbremse: Ratschen beim Ziehen, Quietschen beim Rutschen
+    if (active && tr.handbrake && !E.hb) this.ratchet();
+    E.hb = active && tr.handbrake;
+    const sq = active ? (tr.skid || 0) : 0;
+    this.squealG.gain.setTargetAtTime(sq * 0.07, t, sq > 0 ? 0.04 : 0.09);
+    this.squealF.frequency.setTargetAtTime(1500 + s * 30 + Math.sin(t * 23) * 120, t, 0.03);
+
     // Druckluftbremse beim Anhalten
     if (s > 2) E.wasMoving = true;
     if (active && E.wasMoving && s < 0.25 && load < 0.05) { E.wasMoving = false; this.airPuff(0.09, 2200, 0.55); }
@@ -250,6 +263,13 @@ export class GameAudio {
       if (E.beepT <= 0) { E.beepT = 0.9; this.tone(1050, t, 0.42, { type: 'square', vol: 0.045, filter: 3000, attack: 0.01 }); }
     } else E.beepT = 0;
     return label;
+  }
+  // Handbremshebel: kurze Klick-Folge
+  ratchet() {
+    if (!this.ok()) return;
+    const t = this.now;
+    for (let i = 0; i < 4; i++) this.noiseHit(t + i * 0.035, 0.018, { vol: 0.09, freq: 3200, type: 'bandpass' });
+    this.airPuff(0.035, 3000, 0.18);
   }
   // mechanisches Einrasten des Gangs
   gearClunk(vol = 1) {

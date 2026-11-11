@@ -15,7 +15,9 @@ import { createPost } from './render/post.js';
 import { CityMap } from './world/map.js';
 import { buildCity } from './world/city.js';
 import { Local } from './world/builder.js';
-import { setLogo, blobTexture } from './world/textures.js';
+import { setLogo, setElementsLogo, blobTexture, SKINS } from './world/textures.js';
+import { SkidMarks } from './world/skids.js';
+import { createGarage } from './render/garage.js';
 import { renderThumbnails, PRODUCTS } from './world/products.js';
 import { Truck, buildTruckModel } from './entities/truck.js';
 import { Traffic } from './entities/traffic.js';
@@ -48,8 +50,9 @@ const rankTitle = (score) => RANKS.filter((r) => score >= r[0]).pop();
 
 async function boot() {
   // Logo + Schrift laden, bevor Canvas-Texturen entstehen
-  const logo = await loadImage('logo.png');
+  const [logo, elementsLogo] = await Promise.all([loadImage('logo.png'), loadImage('elements.png').catch(() => null)]);
   setLogo(logo);
+  if (elementsLogo) setElementsLogo(elementsLogo);
   try { await Promise.race([document.fonts.load('800 40px "Exo 2"'), new Promise((r) => setTimeout(r, 2500))]); } catch { /* egal */ }
 
   const canvas = document.getElementById('game');
@@ -73,9 +76,15 @@ async function boot() {
   // Erste Interaktion schaltet Audio frei (Browser-Vorgabe) -> Soundtrack läuft schon im Titel
   window.addEventListener('pointerdown', () => audio.init(), { once: true });
 
-  // LKW + Schatten-Blob
+  // LKW + Schatten-Blob (Design aus der letzten Wahl)
+  const SKIN_KEY = 'lieferung615.skin';
+  let skinIdx = 0;
+  try { skinIdx = Math.max(0, SKINS.findIndex((s) => s.id === localStorage.getItem(SKIN_KEY))); } catch { /* egal */ }
   const truck = new Truck(map);
   scene.add(truck.mesh);
+  if (skinIdx) truck.setSkin(SKINS[skinIdx]);
+  const skids = new SkidMarks(scene);
+  const garage = createGarage(renderer, SKINS, buildTruckModel);
 
   // Geparkte LKW an den Lagern (Deko)
   for (const w of map.warehouses) {
@@ -230,10 +239,37 @@ async function boot() {
     audio.setMusic('title');
     audio.fast = false;
     parkTruck();
+    skids.clear();
     orders.reset();
     hazards.reset(truck);
     refreshHUD();
     navDots.count = 0;
+  }
+
+  // Fahrzeugwahl
+  function updateGarageUI() {
+    const s = SKINS[garage.index];
+    document.getElementById('garage-name').textContent = s.name;
+    document.getElementById('garage-desc').textContent = s.desc;
+    document.getElementById('garage-num').textContent = `Design ${garage.index + 1} / ${SKINS.length}`;
+    document.getElementById('garage-dots').innerHTML = SKINS.map((k, i) => `<i class="${i === garage.index ? 'on' : ''}" style="--c:${k.body}"></i>`).join('');
+  }
+  function toGarage() {
+    G.state = 'garage';
+    showScreen('garage');
+    garage.show(skinIdx);
+    updateGarageUI();
+  }
+  function chooseSkin(dir) {
+    garage.select(garage.index + dir, dir);
+    audio.key();
+    updateGarageUI();
+  }
+  function confirmSkin() {
+    skinIdx = garage.index;
+    try { localStorage.setItem(SKIN_KEY, SKINS[skinIdx].id); } catch { /* egal */ }
+    if (truck.ud.skin !== SKINS[skinIdx].id) truck.setSkin(SKINS[skinIdx]);
+    toTutorial();
   }
 
   function toTutorial() {
@@ -251,6 +287,7 @@ async function boot() {
     showScreen(null);
     parkTruck();
     traffic.clear();
+    skids.clear();
     traffic.rng = mulberry32(SEED ^ 0x2545f491);
     traffic.spawnCars(12, truck.pos);
     orders.reset(SEED);
@@ -304,21 +341,27 @@ async function boot() {
     }
     if (inField && G.state === 'results' && e.code !== 'Enter') audio.key();
     if (e.code === 'Enter' || e.code === 'NumpadEnter') {
-      if (G.state === 'title') { audio.init(); audio.beep(); toTutorial(); }
+      if (G.state === 'title') { audio.init(); audio.beep(); toGarage(); }
+      else if (G.state === 'garage') { audio.beep(); confirmSkin(); }
       else if (G.state === 'tutorial') { audio.beep(); startRound(); }
       else if (G.state === 'results') {
         if (!G.savedId) saveResult();
         else toTitle();
       }
     }
+    if (G.state === 'garage') {
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') chooseSkin(-1);
+      if (e.code === 'ArrowRight' || e.code === 'KeyD') chooseSkin(1);
+    }
     if (e.code === 'KeyH' && G.state === 'play') audio.horn();
-    if (e.code === 'Escape' && (G.state === 'play' || G.state === 'countdown' || G.state === 'tutorial')) toTitle();
+    if (e.code === 'Escape' && (G.state === 'play' || G.state === 'countdown' || G.state === 'tutorial' || G.state === 'garage')) toTitle();
   });
 
   window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     iso.resize();
     post.resize();
+    garage.resize();
   });
 
   // ---------- Hilfsfunktionen im Spiel ----------
@@ -443,11 +486,12 @@ async function boot() {
     for (const f of city.dynamic.fountains) f.scale.y = 1 + Math.sin(t * 6) * 0.15;
     post.grade.uniforms.flash.value = damp(post.grade.uniforms.flash.value, 0, 6, dt);
 
+    if (playing) skids.update(truck);
     blob.position.x = truck.pos.x; blob.position.z = truck.pos.y;
     blob.rotation.z = truck.heading;
 
     // Kamera
-    if (G.state === 'title' || G.state === 'tutorial' || G.state === 'results') {
+    if (G.state === 'title' || G.state === 'tutorial' || G.state === 'results' || G.state === 'garage') {
       iso.orbit += dt * 0.06;
       iso.follow(new THREE.Vector3(0, 0, 0), dt, 0.8);
       iso.setHeight(G.state === 'title' ? 76 : 60, dt, 1.5);
@@ -535,7 +579,10 @@ async function boot() {
     }
     hud.updateFloats(dt, iso.cam);
 
-    post.render(dt, t);
+    if (G.state === 'garage') {
+      garage.update(dt, t);
+      renderer.render(garage.scene, garage.cam);
+    } else post.render(dt, t);
     input.endFrame();
 
     if (debugEl) {
@@ -553,7 +600,7 @@ async function boot() {
   loading.classList.add('done');
   setTimeout(() => loading.remove(), 800);
 
-  if (DEBUG) window.__game = { G, truck, orders, hazards, traffic, map, iso, startRound, toTitle, renderer, PRODUCTS, hud };
+  if (DEBUG) window.__game = { G, truck, orders, hazards, traffic, map, iso, startRound, toTitle, renderer, PRODUCTS, hud, skids };
 }
 
 boot().catch((err) => {

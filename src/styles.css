@@ -362,3 +362,18 @@ kbd.sm { min-width: 0; height: 28px; font-size: 13px; }
 @media (max-height: 900px) { .tutorial, .results { zoom: 0.86; } }
 @media (max-height: 760px) { .tutorial, .results { zoom: 0.74; } .hud-tl, .hud-bl, .hud-br, .hud-timer { zoom: 0.88; } }
 @media (max-height: 600px) { .tutorial, .results { zoom: 0.62; } .hud-tl, .hud-bl, .hud-br, .hud-timer { zoom: 0.76; } }
+
+/* ---------- Fahrzeugwahl ---------- */
+#screen-garage { justify-content: flex-start; pointer-events: none; }
+.garage-info { margin-left: max(5vw, 32px); max-width: 460px; color: #fff; pointer-events: auto; }
+.garage-kicker { font-size: 15px; font-weight: 800; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); }
+.garage-num { margin-top: 18px; font-size: 13px; font-weight: 700; opacity: 0.6; letter-spacing: 0.08em; text-transform: uppercase; }
+.garage-name { margin: 2px 0 6px; font-size: clamp(44px, 6vw, 76px); font-weight: 900; font-style: italic; line-height: 1; text-shadow: 0 6px 24px rgba(0,0,0,0.5); }
+.garage-desc { margin: 0 0 18px; font-size: 19px; font-weight: 600; opacity: 0.8; }
+.garage-dots { display: flex; gap: 10px; margin-bottom: 26px; }
+.garage-dots i { width: 34px; height: 34px; border-radius: 50%; background: var(--c); border: 3px solid rgba(255,255,255,0.25); transition: transform 0.2s, border-color 0.2s; }
+.garage-dots i.on { border-color: #fff; transform: scale(1.15); box-shadow: 0 0 0 4px rgba(255,255,255,0.12); }
+.garage-keys { display: flex; align-items: center; gap: 6px; margin-bottom: 26px; font-weight: 700; opacity: 0.85; }
+.garage-keys kbd { color: var(--ink); }
+.garage-keys span { margin-left: 8px; }
+#screen-garage .press { display: inline-block; }

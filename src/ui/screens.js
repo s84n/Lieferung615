@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export function showScreen(name) {
-  for (const s of ['title', 'tutorial', 'results']) $(`screen-${s}`).classList.toggle('hidden', s !== name);
+  for (const s of ['title', 'garage', 'tutorial', 'results']) $(`screen-${s}`).classList.toggle('hidden', s !== name);
 }
 
 export function renderBoard(el, list, highlightId = null, count = 10) {

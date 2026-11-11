@@ -1,7 +1,7 @@
 // G&R-LKW: Modell + Arcade-Fahrphysik
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { logoPanelTexture, truckRearTexture, LOGO_RED } from '../world/textures.js';
+import { logoPanelTexture, truckRearTexture, SKINS } from '../world/textures.js';
 import { clamp, damp } from '../util.js';
 
 const RB = (w, h, d, r = 0.1, s = 3) => new RoundedBoxGeometry(w, h, d, s, r);
@@ -9,16 +9,28 @@ const shadowed = (m) => { m.castShadow = true; m.receiveShadow = true; return m;
 // Teil an Position hängen (Achtung: parent.add() gibt den Parent zurück, nicht das Teil)
 const put = (parent, m, x, y, z) => { m.position.set(x, y, z); parent.add(m); return m; };
 
-export function buildTruckModel() {
+// Koffer-Texturen je Design nur einmal erzeugen
+const skinTex = new Map();
+function texturesFor(skin) {
+  if (!skinTex.has(skin.id)) {
+    skinTex.set(skin.id, {
+      side: logoPanelTexture(1024, 760, { stripe: true, sub: 'Lieferung615', bg: skin.body, logo: skin.logo, accent: skin.accent, logoScale: skin.logo === 'elements' ? 0.84 : 0.92 }),
+      rear: truckRearTexture({ bg: skin.body, text: skin.rear, accent: skin.accent }),
+    });
+  }
+  return skinTex.get(skin.id);
+}
+
+export function buildTruckModel(skin = SKINS[0]) {
   const root = new THREE.Group();
   const body = new THREE.Group(); // wankt
   root.add(body);
-  const red = new THREE.MeshStandardMaterial({ color: LOGO_RED, roughness: 0.35, metalness: 0.1 });
-  const white = new THREE.MeshStandardMaterial({ color: '#f5f6f7', roughness: 0.4 });
+  const red = new THREE.MeshStandardMaterial({ color: skin.body, roughness: skin.rough, metalness: skin.metal });
+  const white = new THREE.MeshStandardMaterial({ color: skin.roof, roughness: 0.4 });
   const dark = new THREE.MeshStandardMaterial({ color: '#2a3038', roughness: 0.7 });
   const glass = new THREE.MeshStandardMaterial({ color: '#1f3346', roughness: 0.1, metalness: 0.6 });
   const chrome = new THREE.MeshStandardMaterial({ color: '#cfd6dc', roughness: 0.25, metalness: 0.9 });
-  const gold = new THREE.MeshStandardMaterial({ color: '#f5b800', roughness: 0.35, metalness: 0.2 });
+  const gold = new THREE.MeshStandardMaterial({ color: skin.accent, roughness: 0.35, metalness: skin.id === 'classic' ? 0.2 : 0.7 });
 
   // Fahrgestell
   put(body, shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.25, 3.7), dark)), 0, 0.5, -0.05);
@@ -64,8 +76,7 @@ export function buildTruckModel() {
   }
 
   // Kofferaufbau mit Logo
-  const sideTex = logoPanelTexture(1024, 760, { stripe: true, sub: 'Lieferung615' });
-  const rearTex = truckRearTexture();
+  const { side: sideTex, rear: rearTex } = texturesFor(skin);
   const sideMat = new THREE.MeshStandardMaterial({ map: sideTex, roughness: 0.4 });
   const rearMat = new THREE.MeshStandardMaterial({ map: rearTex, roughness: 0.45 });
   const boxGeo = new THREE.BoxGeometry(1.8, 1.9, 2.6);
@@ -102,7 +113,7 @@ export function buildTruckModel() {
     wheels.push(w);
   }
 
-  root.userData = { body, wheels, tailMat, headMat, beacon };
+  root.userData = { body, wheels, tailMat, headMat, beacon, skin: skin.id };
   return root;
 }
 
@@ -134,11 +145,24 @@ export class Truck {
     this.stun = 0;
     this.lastImpact = 0;
     this.wheelSpin = 0;
+    this.skid = 0;
+    this.handbrake = false;
     this.gear = 1;
     this.rpm = IDLE_RPM;
     this.load = 0;
     this.shiftT = 0;
     this.shiftEvents = []; // 'up' | 'down' für Sound/HUD
+    this.sync(0);
+  }
+
+  // Modell gegen ein anderes Design tauschen (Position/Zustand bleiben)
+  setSkin(skin) {
+    const parent = this.mesh.parent;
+    const old = this.mesh;
+    this.mesh = buildTruckModel(skin);
+    this.ud = this.mesh.userData;
+    this.mesh.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    if (parent) { parent.remove(old); parent.add(this.mesh); }
     this.sync(0);
   }
 
@@ -209,6 +233,12 @@ export class Truck {
     this.pos.addScaledVector(this.vel, dt);
     this.collideWorld(events);
 
+    // Handbremse / Rutschen (für Sound und Bremsspuren)
+    this.handbrake = !!handbrake;
+    const slip = this.drift || 0;
+    this.skid = (handbrake && Math.abs(this.speed) > 1.5) || slip > 2.4 || (throttle < 0 && this.speed > 9)
+      ? Math.min(1, 0.35 + Math.abs(this.speed) / 15 + slip * 0.12) : 0;
+
     this.boost = Math.max(0, this.boost - dt);
     this.stun = Math.max(0, this.stun - dt);
     this.lastImpact = Math.max(0, this.lastImpact - dt);
@@ -234,6 +264,13 @@ export class Truck {
       w.rotation.order = 'YXZ';
     }
     if (this.ud.beacon) this.ud.beacon.rotation.y += dt * 8;
+  }
+
+  // Weltpositionen der Hinterräder (für Bremsspuren)
+  rearWheels() {
+    const f = this.forward, r = { x: f.y, y: -f.x };
+    const bx = this.pos.x - f.x * 1.3, bz = this.pos.y - f.y * 1.3;
+    return [{ x: bx + r.x * 0.7, z: bz + r.y * 0.7 }, { x: bx - r.x * 0.7, z: bz - r.y * 0.7 }];
   }
 
   circles() {
