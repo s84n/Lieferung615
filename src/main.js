@@ -8,7 +8,7 @@ import '@fontsource/exo-2/latin-800-italic.css';
 import '@fontsource/exo-2/latin-900-italic.css';
 import './styles.css';
 import * as THREE from 'three';
-import { ROUND_TIME, TILE, DEBUG, QUALITY, FPS_CAP } from './config.js';
+import { ROUND_TIME, TILE, DEBUG, QUALITY, FPS_CAP, VERSION } from './config.js';
 import { loadImage, damp, mulberry32 } from './util.js';
 import { createRenderer, IsoCamera, createLights } from './render/renderer.js';
 import { createPost } from './render/post.js';
@@ -56,6 +56,7 @@ async function boot() {
   if (elementsLogo) setElementsLogo(elementsLogo);
   try { await Promise.race([document.fonts.load('800 40px "Exo 2"'), new Promise((r) => setTimeout(r, 2500))]); } catch { /* egal */ }
 
+  document.getElementById('game-version').textContent = VERSION;
   const canvas = document.getElementById('game');
   const renderer = createRenderer(canvas);
   const scene = new THREE.Scene();

@@ -172,6 +172,7 @@ kbd.sm { min-width: 0; height: 28px; font-size: 13px; }
   animation: dropIn 0.9s 0.15s cubic-bezier(.3, 1.4, .5, 1) both;
 }
 .game-title em { color: var(--gold); margin-left: 6px; text-shadow: 0 6px 0 #9c7400, 0 16px 40px rgba(0,0,0,0.4); }
+.game-version { margin: 0 0 12px 4px; font-size: 14px; font-weight: 600; letter-spacing: 0.08em; opacity: 0.8; text-shadow: 0 1px 4px rgba(0,0,0,0.5); animation: dropIn 0.9s 0.22s both; }
 .tagline { font-size: 22px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,0.5); animation: dropIn 0.9s 0.3s both; }
 .press {
   display: inline-block; margin-top: 26px; padding: 14px 30px; border-radius: 999px;
