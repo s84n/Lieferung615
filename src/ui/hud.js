@@ -178,8 +178,10 @@ export class HUD {
       f.life -= dt;
       if (f.life <= 0) { f.el.remove(); this.floats.splice(i, 1); continue; }
       v.copy(f.pos).project(camera);
-      f.el.style.left = `${(v.x * 0.5 + 0.5) * window.innerWidth}px`;
-      f.el.style.top = `${(-v.y * 0.5 + 0.5) * window.innerHeight}px`;
+      // hinter der Kamera (Cockpit, z. B. Punkte am eigenen LKW): mittig einblenden
+      const behind = v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1;
+      f.el.style.left = `${behind ? window.innerWidth / 2 : (v.x * 0.5 + 0.5) * window.innerWidth}px`;
+      f.el.style.top = `${behind ? window.innerHeight * 0.42 : (-v.y * 0.5 + 0.5) * window.innerHeight}px`;
     }
   }
   clearFloats() { for (const f of this.floats) f.el.remove(); this.floats = []; }
@@ -197,7 +199,7 @@ export class HUD {
     // Panel-Rechtecke nur alle 0,5 s messen (getBoundingClientRect erzwingt sonst jedes Bild ein Layout)
     if (!this.rectCache || now - this.rectCacheT > 500) {
       this.rectCacheT = now;
-      this.rectCache = ['.hud-bl', '.hud-br', '.hud-tr', '.orders', '.score-panel', '.hud-timer']
+      this.rectCache = ['.hud-bl', '.hud-br', '.hud-tr', '.orders', '.score-panel', '.hud-timer', '.view-btn', '.phone.on']
         .map((sel) => this.el.querySelector(sel)?.getBoundingClientRect()).filter((r) => r && r.width);
     }
     const rects = this.rectCache;
@@ -222,9 +224,12 @@ export class HUD {
       const d = Math.hypot(z.spot.x - truck.pos.x, z.spot.z - truck.pos.y) * 1.2;
       const dt = d < 15 ? 'hier' : `${Math.round(d / 10) * 10} m`;
       if (m.lastDist !== dt) { m.lastDist = dt; m.dist.textContent = dt; }
-      v.set(z.spot.x, 7.5, z.spot.z).project(camera);
+      v.set(z.spot.x, camera.isPerspectiveCamera ? 3.5 : 7.5, z.spot.z).project(camera);
       let sx = (v.x * 0.5 + 0.5) * w, sy = (-v.y * 0.5 + 0.5) * h;
-      const inside = sx > L && sx < R && sy > T && sy < B;
+      // Cockpit-Kamera: Ziele hinter dem Fahrer werden gespiegelt projiziert -> an den unteren Rand
+      const behind = v.z > 1;
+      if (behind) { sx = w - sx; sy = h * 2; }
+      const inside = !behind && sx > L && sx < R && sy > T && sy < B;
       let ang = 0;
       if (inside) {
         sy += Math.sin(now / 220 + z.spot.x) * 5;

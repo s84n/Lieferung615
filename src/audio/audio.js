@@ -44,7 +44,9 @@ export class GameAudio {
     this.applyVolumes();
     this.saveSettings();
   }
-  musicLevel() { return this.settings.music * 0.5 * (this.duck ?? 1); }
+  musicLevel() { return this.settings.music * 0.5 * (this.duck ?? 1) * (this.callDuck ?? 1); }
+  // Musik während eines Telefonats leiser
+  setCallDuck(on) { this.callDuck = on ? 0.35 : 1; this.applyVolumes(); }
   applyVolumes() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
@@ -350,6 +352,40 @@ export class GameAudio {
     const t = this.now;
     this.tone(220, t, 0.14, { type: 'square', vol: 0.12, filter: 1200 });
     this.tone(185, t + 0.15, 0.2, { type: 'square', vol: 0.12, filter: 1200 });
+  }
+  // Handy-Klingeln: klassischer Doppelton-Triller, ein Klingelstoß ~0,9 s
+  ring() {
+    if (!this.ok()) return;
+    const t = this.now;
+    for (let i = 0; i < 14; i++) {
+      const f = i % 2 ? 1180 : 1480;
+      this.tone(f, t + i * 0.055, 0.05, { type: 'square', vol: 0.06, filter: 3200, attack: 0.002 });
+    }
+    this.tone(2200, t, 0.75, { type: 'sine', vol: 0.015 });
+  }
+  // Abheben-Klick
+  pickupPhone() {
+    if (!this.ok()) return;
+    const t = this.now;
+    this.tone(1600, t, 0.05, { type: 'sine', vol: 0.12 });
+    this.tone(2100, t + 0.06, 0.08, { type: 'sine', vol: 0.1 });
+  }
+  hangup() {
+    if (!this.ok()) return;
+    const t = this.now;
+    for (let i = 0; i < 3; i++) this.tone(480, t + i * 0.22, 0.14, { type: 'sine', vol: 0.08 });
+  }
+  // Brabbel-Stimme (wie bei Comic-Figuren): kurze, gefilterte Silben mit tiefer Männerstimme
+  voice(syllables = 6, base = 125) {
+    if (!this.ok()) return;
+    const t = this.now;
+    let at = t;
+    for (let i = 0; i < syllables; i++) {
+      const d = 0.06 + Math.random() * 0.07;
+      const f = base * (0.85 + Math.random() * 0.45);
+      this.tone(f, at, d, { type: 'sawtooth', vol: 0.09, filter: 900 + Math.random() * 700, slide: f * (0.8 + Math.random() * 0.3), attack: 0.01 });
+      at += d + 0.02 + (Math.random() < 0.18 ? 0.09 : 0);
+    }
   }
   beep(high = false) {
     if (!this.ok()) return;

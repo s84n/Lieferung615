@@ -119,7 +119,8 @@ export function createPost(renderer, scene, camera) {
   const composer = new EffectComposer(renderer, rt);
   // Die Szene landet in renderTarget2 (MSAA). renderTarget1 bekommt nur Vollbild-Effekte -> kein MSAA nötig.
   composer.renderTarget1.samples = 0;
-  composer.addPass(new RenderPass(scene, camera));
+  const renderPass = new RenderPass(scene, camera);
+  composer.addPass(renderPass);
 
   // Bloom in halber Auflösung (weichgezeichnet sieht man den Unterschied nicht)
   const bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 4, size.y / 4), 0.16, 0.5, 1.05);
@@ -143,6 +144,7 @@ export function createPost(renderer, scene, camera) {
 
   return {
     composer, bloom, tiltH, tiltV, grade, resize,
+    setCamera(cam) { renderPass.camera = cam; },
     setTilt(amount, band = 0.22) {
       for (const p of [tiltH, grade]) { p.uniforms.amount.value = amount; p.uniforms.band.value = band; }
     },

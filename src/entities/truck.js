@@ -141,6 +141,7 @@ export class Truck {
     this.yawRate = 0;
     this.roll = 0; this.pitch = 0;
     this.boost = 0;
+    this.chef = 0; // Sekunden mit Chef-Bonus (+20 %, Dieter hat angerufen)
     this.stun = 0;
     this.lastImpact = 0;
     this.wheelSpin = 0;
@@ -169,7 +170,7 @@ export class Truck {
 
   update(dt, input, events) {
     const fwd = this.forward;
-    const boostMul = this.boost > 0 ? 1.35 : 1;
+    const boostMul = (this.boost > 0 ? 1.35 : 1) * (this.chef > 0 ? 1.2 : 1);
     const vMax = 15 * boostMul;
     const control = this.stun > 0 ? 0.25 : 1;
     let throttle = input ? (input.up ? 1 : 0) - (input.down ? 1 : 0) : 0;
@@ -239,6 +240,7 @@ export class Truck {
       ? Math.min(1, 0.35 + Math.abs(this.speed) / 15 + slip * 0.12) : 0;
 
     this.boost = Math.max(0, this.boost - dt);
+    this.chef = Math.max(0, this.chef - dt);
     this.stun = Math.max(0, this.stun - dt);
     this.lastImpact = Math.max(0, this.lastImpact - dt);
 

@@ -12,6 +12,8 @@ import { ROUND_TIME, TILE, DEBUG, QUALITY, FPS_CAP, VERSION } from './config.js'
 import { loadImage, damp, mulberry32 } from './util.js';
 import { createRenderer, IsoCamera, createLights } from './render/renderer.js';
 import { createPost } from './render/post.js';
+import { createCockpit } from './render/cockpit.js';
+import { BossCall, CHEF_BOOST } from './game/boss.js';
 import { CityMap } from './world/map.js';
 import { buildCity } from './world/city.js';
 import { Local, mergeByMaterial } from './world/builder.js';
@@ -63,6 +65,9 @@ async function boot() {
   const iso = new IsoCamera();
   const lights = createLights(scene, renderer);
   const post = createPost(renderer, scene, iso.cam);
+  // Nebel nur für die Cockpit-Ansicht (in Iso so weit weg, dass er nichts tut -> keine Shader-Neukompilierung beim Umschalten)
+  scene.fog = new THREE.Fog(scene.background.getHex(), 2000, 2400);
+  const cockpit = createCockpit(scene);
 
   const map = new CityMap(615);
   const city = buildCity(map);
@@ -85,6 +90,7 @@ async function boot() {
   const truck = new Truck(map);
   scene.add(truck.mesh);
   if (skinIdx) truck.setSkin(SKINS[skinIdx]);
+  cockpit.setSkin(SKINS[skinIdx]);
   const skids = new SkidMarks(scene);
   const garage = createGarage(renderer, SKINS, buildTruckModel);
 
@@ -221,6 +227,39 @@ async function boot() {
   blob.position.y = 0.03;
   scene.add(blob);
 
+  // ---------- Ansicht: Iso oder Cockpit (POV) ----------
+  const VIEW_KEY = 'lieferung615.view';
+  let viewMode = 'iso';
+  try { if (localStorage.getItem(VIEW_KEY) === 'pov') viewMode = 'pov'; } catch { /* egal */ }
+  const viewBtn = document.getElementById('view-btn');
+  const viewLabel = document.getElementById('view-label');
+  function renderViewBtn() {
+    viewLabel.textContent = viewMode === 'pov' ? 'Draufsicht' : 'Cockpit';
+    viewBtn.classList.toggle('pov', viewMode === 'pov');
+  }
+  function toggleView() {
+    viewMode = viewMode === 'pov' ? 'iso' : 'pov';
+    try { localStorage.setItem(VIEW_KEY, viewMode); } catch { /* egal */ }
+    renderViewBtn();
+    audio.key();
+    viewBtn.blur();
+  }
+  viewBtn.addEventListener('click', toggleView);
+  renderViewBtn();
+
+  // ---------- Chef-Anruf (Dieter) ----------
+  const boss = new BossCall({
+    onRing(first) { audio.ring(); if (first) audio.setCallDuck(true); },
+    onAnswer() {
+      audio.pickupPhone();
+      truck.chef = CHEF_BOOST;
+      hud.toast('📞 Dieter ist dran: +20 % Tempo!', 'gold', 1800);
+    },
+    onVoice(n) { audio.voice(n); },
+    onHangup() { audio.hangup(); audio.setCallDuck(false); },
+    onPhoneScreen(img, text) { cockpit.setPhone(img, text); },
+  });
+
   function refreshHUD() {
     hud.setOrders(orders.active || []);
     hud.setCargo(orders.cargo || []);
@@ -251,6 +290,8 @@ async function boot() {
     skids.clear();
     orders.reset();
     hazards.reset(truck);
+    boss.reset();
+    audio.setCallDuck(false);
     refreshHUD();
     navDots.count = 0;
   }
@@ -278,6 +319,7 @@ async function boot() {
     skinIdx = garage.index;
     try { localStorage.setItem(SKIN_KEY, SKINS[skinIdx].id); } catch { /* egal */ }
     if (truck.ud.skin !== SKINS[skinIdx].id) truck.setSkin(SKINS[skinIdx]);
+    cockpit.setSkin(SKINS[skinIdx]);
     toTutorial();
   }
 
@@ -301,6 +343,8 @@ async function boot() {
     traffic.spawnCars(12, truck.pos);
     orders.reset(SEED);
     hazards.reset(truck, SEED);
+    boss.reset(SEED);
+    truck.chef = 0;
     G.urgentDone = 0; G.docks = 0; G.damaged = 0;
     hud.clearOrders();
     hud.cargoKey = null;
@@ -363,6 +407,7 @@ async function boot() {
       if (e.code === 'ArrowRight' || e.code === 'KeyD') chooseSkin(1);
     }
     if (e.code === 'KeyH' && G.state === 'play') audio.horn();
+    if (!inField && e.code === 'KeyC' && (G.state === 'play' || G.state === 'countdown')) toggleView();
     if (e.code === 'Escape' && (G.state === 'play' || G.state === 'countdown' || G.state === 'tutorial' || G.state === 'garage')) toTitle();
   });
 
@@ -372,6 +417,7 @@ async function boot() {
     iso.resize();
     post.resize();
     garage.resize();
+    cockpit.resize();
   });
 
   // ---------- Hilfsfunktionen im Spiel ----------
@@ -573,6 +619,20 @@ async function boot() {
       post.setTilt(2.4, 0.22);
       lights.setShadowSize(36);
     }
+    // Cockpit-Ansicht nur während der Fahrt
+    const pov = viewMode === 'pov' && (G.state === 'play' || G.state === 'countdown' || G.state === 'ending');
+    const activeCam = pov ? cockpit.camera : iso.cam;
+    truck.mesh.visible = !pov;
+    blob.visible = !pov;
+    cockpit.setVisible(pov);
+    post.setCamera(activeCam);
+    if (pov) {
+      cockpit.update(truck, dt, iso.shake);
+      post.setTilt(0);
+      lights.setShadowSize(44);
+      scene.fog.near = 70; scene.fog.far = 185;
+    } else { scene.fog.near = 2000; scene.fog.far = 2400; }
+    scene.fog.color.copy(scene.background);
     // Tageslauf: Runde = Sonnenaufgang bis Feierabend, Titel = goldener Morgen, Ergebnis = Abendrot
     let dayP;
     if (G.state === 'play' || G.state === 'countdown') dayP = 1 - G.timeLeft / ROUND_TIME;
@@ -587,7 +647,12 @@ async function boot() {
       if (clockEl.textContent !== txt) clockEl.textContent = txt;
     }
     iso.update(dt);
-    lights.follow(iso.target);
+    if (pov) {
+      // Schatten vor dem LKW konzentrieren (dort schaut man hin)
+      const f = truck.forward;
+      lights.follow(lookTarget.set(truck.pos.x + f.x * 24, 0, truck.pos.y + f.y * 24));
+    } else lights.follow(iso.target);
+    boss.update(dt, ROUND_TIME - G.timeLeft, G.state === 'play', clockEl.textContent.replace(' Uhr', ''));
 
     // Zustandslogik
     if (G.state === 'countdown') {
@@ -632,17 +697,18 @@ async function boot() {
       const pus = [];
       if (truck.boost > 0) pus.push({ id: 'coffee', icon: '☕', name: 'Turbo', left: truck.boost, total: G.boostTotal });
       if (G.navi > 0) pus.push({ id: 'navi', icon: '🧭', name: 'Navi', left: G.navi, total: G.naviTotal });
+      if (truck.chef > 0) pus.push({ id: 'chef', icon: '📞', name: 'Dieter +20 %', left: truck.chef, total: CHEF_BOOST });
       hud.setPowerups(pus);
       if (G.navi <= 0 && navDots.count) { navDots.count = 0; G.navPath = null; }
       navDots.material.emissiveIntensity = 1.0 + Math.sin(t * 6) * 0.35;
       const tgt = playing ? G.navTarget : null;
-      hud.updateMarkers(playing || G.state === 'countdown' ? orders.targets() : [], iso.cam, truck, tgt);
+      hud.updateMarkers(playing || G.state === 'countdown' ? orders.targets() : [], activeCam, truck, tgt);
       const waiting = (orders.active || []).filter((o) => o.state === 'waiting').map((o) => o.customer);
       // Minimap mit 30 Hz zeichnen reicht völlig
       miniAcc += rawDt;
       if (miniAcc >= 1 / 30) { miniAcc = 0; hud.drawMinimap(truck, orders.targets(), waiting, traffic.cars, hazards.powerups, map.blocked, G.navPath, t); }
     }
-    hud.updateFloats(dt, iso.cam);
+    hud.updateFloats(dt, activeCam);
 
     if (G.state === 'garage') {
       garage.update(dt, t);
@@ -665,7 +731,7 @@ async function boot() {
   loading.classList.add('done');
   setTimeout(() => loading.remove(), 800);
 
-  if (DEBUG) window.__game = { dyn, setPixelRatio, G, truck, orders, hazards, traffic, map, iso, startRound, toTitle, renderer, PRODUCTS, hud, skids };
+  if (DEBUG) window.__game = { boss, cockpit, toggleView, dyn, setPixelRatio, G, truck, orders, hazards, traffic, map, iso, startRound, toTitle, renderer, PRODUCTS, hud, skids };
 }
 
 boot().catch((err) => {
