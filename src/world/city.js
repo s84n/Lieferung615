@@ -587,11 +587,18 @@ function buildOutskirts(sb, rng, size) {
   const L = new Local(sb, 0, 0, 0);
   // Felder
   const fields = ['#c9b458', '#a8c46a', '#b58b5a', '#d8c77a', '#9bbf5e'];
+  // Die Stadt ist quadratisch: Objekte im Umland nur dort, wo ihre ganze Fläche außerhalb liegt
+  // (sonst landen sie in diagonaler Richtung auf der äußeren Ringstraße)
+  const outside = (x, z, ext) => Math.max(Math.abs(x), Math.abs(z)) - ext > half + 3;
   for (let i = 0; i < 26; i++) {
-    const ang = rng() * Math.PI * 2;
-    const r = half + 18 + rng() * 45;
-    const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
-    const w = 10 + rng() * 14, d = 8 + rng() * 12;
+    let ang, r, x, z, w, d, tries = 0;
+    do {
+      ang = rng() * Math.PI * 2;
+      r = half + 18 + rng() * 45;
+      x = Math.cos(ang) * r; z = Math.sin(ang) * r;
+      w = 10 + rng() * 14; d = 8 + rng() * 12;
+    } while (!outside(x, z, Math.hypot(w, d) / 2) && ++tries < 30);
+    if (!outside(x, z, Math.hypot(w, d) / 2)) continue;
     const col = pick(fields, rng);
     const F = new Local(sb, x, z, Math.floor(rng() * 2) * Math.PI / 2);
     // jedes Feld eine eigene Höhe, damit überlappende Felder nicht flackern (Z-Fighting)
@@ -610,8 +617,12 @@ function buildOutskirts(sb, rng, size) {
   }
   // Ein paar Bauernhöfe
   for (let i = 0; i < 8; i++) {
-    const ang = (i / 8) * Math.PI * 2 + rng();
-    const r = half + 12 + rng() * 16;
+    let ang, r, tries = 0;
+    do {
+      ang = (i / 8) * Math.PI * 2 + rng();
+      r = half + 12 + rng() * 16;
+    } while (!outside(Math.cos(ang) * r, Math.sin(ang) * r, 8) && ++tries < 30);
+    if (!outside(Math.cos(ang) * r, Math.sin(ang) * r, 8)) continue;
     const H = new Local(sb, Math.cos(ang) * r, Math.sin(ang) * r, rng() * Math.PI);
     H.rbox(4, 2.4, 3, pick(P.walls, rng), 0, 0, 0, 0, 0.08);
     H.roof(4.4, 1.6, 3.6, pick(P.roofs, rng), 0, 2.4, 0);

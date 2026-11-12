@@ -1,5 +1,5 @@
 // Zentrale Spielkonstanten
-export const VERSION = 'v1.10';   // bei jedem Release erhöhen (steht im Titelbild)
+export const VERSION = 'v1.11';   // bei jedem Release erhöhen (steht im Titelbild)
 export const TILE = 4;            // Weltgröße eines Block-Tiles
 export const ROAD_W = 7;          // Breite einer Straßenachse (breiter als Block-Tiles)
 export const N = 25;              // Tiles pro Kante
