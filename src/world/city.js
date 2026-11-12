@@ -72,11 +72,16 @@ export function buildCity(map) {
   }
   // Begrenzung der Stadt (Hecke außen)
   const hs = size / 2 + 0.6;
+  const hedge = new StaticBuilder();
   for (const s of [-1, 1]) {
-    roads.rbox(size + 2.4, 0.9, 1.0, '#4f8c3f', 0, 0, s * hs, 0, 0.3);
-    roads.rbox(1.0, 0.9, size + 2.4, '#4f8c3f', s * hs, 0, 0, 0, 0.3);
+    hedge.rbox(size + 2.4, 0.9, 1.0, '#4f8c3f', 0, 0, s * hs, 0, 0.3);
+    hedge.rbox(1.0, 0.9, size + 2.4, '#4f8c3f', s * hs, 0, 0, 0, 0.3);
   }
-  root.add(roads.build(mat));
+  root.add(hedge.build(mat));
+  // Fahrbahnmarkierungen sind 2 cm flach: kein Schattenwurf nötig (spart Schatten-Durchgang)
+  const marks = roads.build(mat);
+  marks.castShadow = false;
+  root.add(marks);
 
   // Blöcke
   for (const b of map.blocks) {

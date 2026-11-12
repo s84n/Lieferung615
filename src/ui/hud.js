@@ -44,6 +44,8 @@ export class HUD {
     this.scoreEl.classList.add('score-bump');
   }
   setCombo(mult) {
+    if (mult === this.lastMult) return;
+    this.lastMult = mult;
     if (mult > 1) { this.comboEl.textContent = `×${mult.toLocaleString('de-DE')}`; this.comboEl.classList.add('on'); }
     else this.comboEl.classList.remove('on');
   }
@@ -59,8 +61,10 @@ export class HUD {
     this.timerPanel.classList.add('plus');
   }
   setSpeed(v, gear, rpm = 700) {
-    this.speedEl.textContent = Math.round(Math.abs(v) * 4.2);
-    this.rpmEl.style.clipPath = `inset(0 ${(100 - Math.min(100, (rpm / 2600) * 100)).toFixed(1)}% 0 0 round 4px)`;
+    const kmh = Math.round(Math.abs(v) * 4.2);
+    if (kmh !== this.lastKmh) { this.lastKmh = kmh; this.speedEl.textContent = kmh; }
+    const clip = `inset(0 ${(100 - Math.min(100, (rpm / 2600) * 100)).toFixed(0)}% 0 0 round 4px)`;
+    if (clip !== this.lastClip) { this.lastClip = clip; this.rpmEl.style.clipPath = clip; }
     if (gear !== undefined && this.gearEl.textContent !== String(gear)) {
       this.gearEl.textContent = gear;
       this.gearEl.classList.remove('shift'); void this.gearEl.offsetWidth; this.gearEl.classList.add('shift');
@@ -146,7 +150,7 @@ export class HUD {
     }
     for (const p of list) {
       const bar = this.puEl.querySelector(`[data-id="${p.id}"] .bar`);
-      if (bar) bar.style.width = `${(p.left / p.total) * 100}%`;
+      if (bar) bar.style.width = `${((p.left / p.total) * 100).toFixed(1)}%`;
     }
   }
 
@@ -190,8 +194,13 @@ export class HUD {
     // freier Bereich; Marker am Rand weichen den HUD-Panels aus
     const L = 64, R = w - 64, T = 110, B = h - 96;
     const pad = 46;
-    const rects = ['.hud-bl', '.hud-br', '.hud-tr', '.orders', '.score-panel', '.hud-timer']
-      .map((sel) => this.el.querySelector(sel)?.getBoundingClientRect()).filter((r) => r && r.width);
+    // Panel-Rechtecke nur alle 0,5 s messen (getBoundingClientRect erzwingt sonst jedes Bild ein Layout)
+    if (!this.rectCache || now - this.rectCacheT > 500) {
+      this.rectCacheT = now;
+      this.rectCache = ['.hud-bl', '.hud-br', '.hud-tr', '.orders', '.score-panel', '.hud-timer']
+        .map((sel) => this.el.querySelector(sel)?.getBoundingClientRect()).filter((r) => r && r.width);
+    }
+    const rects = this.rectCache;
     for (const z of zones) {
       if (!z.mesh.visible) continue;
       live.add(z);
@@ -211,7 +220,8 @@ export class HUD {
         m.name.textContent = SHORT(z.spot.name);
       }
       const d = Math.hypot(z.spot.x - truck.pos.x, z.spot.z - truck.pos.y) * 1.2;
-      m.dist.textContent = d < 15 ? 'hier' : `${Math.round(d / 10) * 10} m`;
+      const dt = d < 15 ? 'hier' : `${Math.round(d / 10) * 10} m`;
+      if (m.lastDist !== dt) { m.lastDist = dt; m.dist.textContent = dt; }
       v.set(z.spot.x, 7.5, z.spot.z).project(camera);
       let sx = (v.x * 0.5 + 0.5) * w, sy = (-v.y * 0.5 + 0.5) * h;
       const inside = sx > L && sx < R && sy > T && sy < B;

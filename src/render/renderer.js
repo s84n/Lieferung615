@@ -19,6 +19,8 @@ export function createRenderer(canvas) {
   return renderer;
 }
 
+const _isoD = new THREE.Vector3(), _isoL = new THREE.Vector3(), _yAxis = new THREE.Vector3(0, 1, 0);
+
 export class IsoCamera {
   constructor() {
     this.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400);
@@ -44,7 +46,7 @@ export class IsoCamera {
     if (Math.abs(nh - this.height) > 1e-3) { this.height = nh; this.resize(); }
   }
   update(dt) {
-    const d = ISO_DIR.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), this.orbit).multiplyScalar(this.distance);
+    const d = _isoD.copy(ISO_DIR).applyAxisAngle(_yAxis, this.orbit).multiplyScalar(this.distance);
     this.cam.position.copy(this.target).add(d);
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 3);
@@ -52,7 +54,7 @@ export class IsoCamera {
       this.cam.position.x += (Math.random() - 0.5) * s;
       this.cam.position.z += (Math.random() - 0.5) * s;
     }
-    this.cam.lookAt(this.cam.position.clone().sub(d));
+    this.cam.lookAt(_isoL.copy(this.cam.position).sub(d));
   }
 }
 

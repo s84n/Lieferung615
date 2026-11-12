@@ -1,48 +1,74 @@
-// Postprocessing: AO, Bloom, Tilt-Shift, Farbstimmung + Körnung
+// Postprocessing: Bloom, Tilt-Shift, Tonemapping, Farbstimmung + Körnung
+// Performance: nur 2 Vollbild-Durchgänge nach Bloom (Tonemapping+Tilt-H, Tilt-V+Farbstimmung),
+// MSAA nur auf dem Szenen-Puffer, Bloom in halber Auflösung, AO ist in die Stadt eingebacken (ao.js).
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { QUALITY } from '../config.js';
 
-const TiltShiftShader = {
+const VERT = /* glsl */`
+  varying vec2 vUv;
+  void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+
+// Tilt-Shift-Gewichte (13 Taps) – identisch zur bisherigen Schleife
+const TILT_COMMON = /* glsl */`
+  uniform sampler2D tDiffuse; uniform vec2 resolution; uniform vec2 dir;
+  uniform float focus, band, amount;
+  varying vec2 vUv;
+  float tiltAmount() {
+    float d = abs(vUv.y - focus);
+    return smoothstep(band * 0.5, band * 0.5 + 0.38, d) * amount;
+  }`;
+
+// Durchgang 1: ACES-Tonemapping + sRGB je Tap (= frühere OutputPass), dann horizontal weichzeichnen
+const TiltToneShader = {
   uniforms: {
     tDiffuse: { value: null },
     resolution: { value: new THREE.Vector2(1, 1) },
     dir: { value: new THREE.Vector2(1, 0) },
-    focus: { value: 0.5 },
-    band: { value: 0.22 },
-    amount: { value: 2.4 },
+    focus: { value: 0.5 }, band: { value: 0.22 }, amount: { value: 2.4 },
+    toneMappingExposure: { value: 1 },
   },
-  vertexShader: /* glsl */`
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  vertexShader: VERT,
   fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform vec2 resolution; uniform vec2 dir;
-    uniform float focus, band, amount;
-    varying vec2 vUv;
+    ${TILT_COMMON}
+    uniform float toneMappingExposure;
+    vec3 RRTAndODTFit(vec3 v) {
+      vec3 a = v * (v + 0.0245786) - 0.000090537;
+      vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+      return a / b;
+    }
+    vec3 display(vec3 color) {
+      const mat3 ACESInputMat = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
+      const mat3 ACESOutputMat = mat3(vec3(1.60475, -0.10208, -0.00327), vec3(-0.53108, 1.10813, -0.07276), vec3(-0.07367, -0.00605, 1.07602));
+      color *= toneMappingExposure / 0.6;
+      color = ACESOutputMat * RRTAndODTFit(ACESInputMat * color);
+      color = clamp(color, 0.0, 1.0);
+      return mix(pow(color, vec3(0.41666)) * 1.055 - vec3(0.055), color * 12.92, vec3(lessThanEqual(color, vec3(0.0031308))));
+    }
     void main() {
-      float d = abs(vUv.y - focus);
-      float b = smoothstep(band * 0.5, band * 0.5 + 0.38, d) * amount;
-      if (b < 0.05) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
-      vec4 sum = vec4(0.0); float ws = 0.0;
+      float b = tiltAmount();
+      if (b < 0.05) { gl_FragColor = vec4(display(texture2D(tDiffuse, vUv).rgb), 1.0); return; }
+      vec3 sum = vec3(0.0); float ws = 0.0;
       for (int i = -6; i <= 6; i++) {
         float fi = float(i);
         float w = exp(-fi * fi / 18.0);
-        sum += texture2D(tDiffuse, vUv + dir * fi * b / resolution) * w;
+        sum += display(texture2D(tDiffuse, vUv + dir * fi * b / resolution).rgb) * w;
         ws += w;
       }
-      gl_FragColor = sum / ws;
+      gl_FragColor = vec4(sum / ws, 1.0);
     }`,
 };
 
-const GradeShader = {
+// Durchgang 2: vertikal weichzeichnen + Farbstimmung, Vignette, Blitz, Körnung
+const TiltGradeShader = {
   uniforms: {
     tDiffuse: { value: null },
     resolution: { value: new THREE.Vector2(1, 1) },
+    dir: { value: new THREE.Vector2(0, 1) },
+    focus: { value: 0.5 }, band: { value: 0.22 }, amount: { value: 2.4 },
     time: { value: 0 },
     saturation: { value: 1.04 },
     vignette: { value: 0.4 },
@@ -51,14 +77,26 @@ const GradeShader = {
     tint: { value: new THREE.Vector3(1, 1, 1) },
     flashColor: { value: new THREE.Color(1, 0.2, 0.2) },
   },
-  vertexShader: TiltShiftShader.vertexShader,
+  vertexShader: VERT,
   fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform vec2 resolution; uniform float time, saturation, vignette, grain, flash;
+    ${TILT_COMMON}
+    uniform float time, saturation, vignette, grain, flash;
     uniform vec3 flashColor; uniform vec3 tint;
-    varying vec2 vUv;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main() {
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      float b = tiltAmount();
+      vec3 c;
+      if (b < 0.05) c = texture2D(tDiffuse, vUv).rgb;
+      else {
+        vec3 sum = vec3(0.0); float ws = 0.0;
+        for (int i = -6; i <= 6; i++) {
+          float fi = float(i);
+          float w = exp(-fi * fi / 18.0);
+          sum += texture2D(tDiffuse, vUv + dir * fi * b / resolution).rgb * w;
+          ws += w;
+        }
+        c = sum / ws;
+      }
       float l = dot(c, vec3(0.299, 0.587, 0.114));
       c = mix(vec3(l), c, saturation);
       c *= tint; // Tageszeit-Farbstimmung
@@ -79,43 +117,38 @@ export function createPost(renderer, scene, camera) {
     samples: QUALITY === 'low' ? 0 : 4,
   });
   const composer = new EffectComposer(renderer, rt);
+  // Die Szene landet in renderTarget2 (MSAA). renderTarget1 bekommt nur Vollbild-Effekte -> kein MSAA nötig.
+  composer.renderTarget1.samples = 0;
   composer.addPass(new RenderPass(scene, camera));
 
-  let gtao = null;
-  if (QUALITY !== 'low') {
-    gtao = new GTAOPass(scene, camera, size.x, size.y);
-    gtao.output = GTAOPass.OUTPUT.Default;
-    gtao.blendIntensity = 0.9;
-    gtao.updateGtaoMaterial({ radius: 1.2, distanceExponent: 1.5, thickness: 2, scale: 1.2, samples: 12 });
-    gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
-    composer.addPass(gtao);
-  }
-  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.16, 0.5, 1.05);
+  // Bloom in halber Auflösung (weichgezeichnet sieht man den Unterschied nicht)
+  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 4, size.y / 4), 0.16, 0.5, 1.05);
+  const bloomSetSize = bloom.setSize.bind(bloom);
+  bloom.setSize = (w, h) => bloomSetSize(Math.max(2, Math.round(w / 2)), Math.max(2, Math.round(h / 2)));
   composer.addPass(bloom);
-  composer.addPass(new OutputPass());
 
-  const tiltH = new ShaderPass(TiltShiftShader);
-  const tiltV = new ShaderPass(TiltShiftShader);
-  tiltV.uniforms.dir.value.set(0, 1);
+  const tiltH = new ShaderPass(TiltToneShader);
+  const grade = new ShaderPass(TiltGradeShader);
   composer.addPass(tiltH);
-  composer.addPass(tiltV);
-  const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
+  const tiltV = grade; // Tilt-V steckt jetzt im Farbstimmungs-Durchgang
 
   function resize() {
     const s = renderer.getDrawingBufferSize(new THREE.Vector2());
+    composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(window.innerWidth, window.innerHeight);
-    for (const p of [tiltH, tiltV, grade]) p.uniforms.resolution.value.set(s.x, s.y);
+    for (const p of [tiltH, grade]) p.uniforms.resolution.value.set(s.x, s.y);
   }
   resize();
 
   return {
-    composer, bloom, gtao, tiltH, tiltV, grade, resize,
+    composer, bloom, tiltH, tiltV, grade, resize,
     setTilt(amount, band = 0.22) {
-      for (const p of [tiltH, tiltV]) { p.uniforms.amount.value = amount; p.uniforms.band.value = band; }
+      for (const p of [tiltH, grade]) { p.uniforms.amount.value = amount; p.uniforms.band.value = band; }
     },
     render(dt, time) {
       grade.uniforms.time.value = time;
+      tiltH.uniforms.toneMappingExposure.value = renderer.toneMappingExposure;
       composer.render(dt);
     },
   };

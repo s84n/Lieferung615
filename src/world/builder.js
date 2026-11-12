@@ -103,3 +103,51 @@ export class Local {
     const [x, z] = this.tx(lx, lz); this.b.add(geo, col, x, y, z, this.ry + ry, rx, rz, sx, sy, sz); return this;
   }
 }
+
+// Fasst alle Meshes unter `root` mit gleichem Material zu je einem Mesh zusammen (weniger Draw-Calls).
+// keep(mesh) -> true: Mesh (samt Kindern) bleibt eigenständig (z. B. blinkende Lampen, Räder).
+// Meshes mit Material-Arrays bleiben ebenfalls unverändert.
+const _inv = new THREE.Matrix4();
+const _rel = new THREE.Matrix4();
+export function mergeByMaterial(root, keep = () => false) {
+  root.updateMatrixWorld(true);
+  _inv.copy(root.matrixWorld).invert();
+  const buckets = new Map();
+  const visit = (o) => {
+    for (const c of [...o.children]) {
+      if (keep(c)) continue;
+      if (c.isMesh && !c.isInstancedMesh && !Array.isArray(c.material) && c.children.length === 0) {
+        const key = `${c.material.uuid}|${c.castShadow}|${c.receiveShadow}`;
+        if (!buckets.has(key)) buckets.set(key, { mat: c.material, cast: c.castShadow, recv: c.receiveShadow, list: [] });
+        buckets.get(key).list.push(c);
+      } else visit(c);
+    }
+  };
+  visit(root);
+  for (const b of buckets.values()) {
+    if (b.list.length < 2) continue;
+    const geos = b.list.map((m) => {
+      _rel.multiplyMatrices(_inv, m.matrixWorld);
+      let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      g.applyMatrix4(_rel);
+      return g;
+    });
+    // nur Attribute behalten, die alle Teile haben
+    const names = Object.keys(geos[0].attributes).filter((n) => geos.every((g) => g.attributes[n]));
+    for (const g of geos) {
+      for (const n of Object.keys(g.attributes)) if (!names.includes(n)) g.deleteAttribute(n);
+      g.morphAttributes = {};
+      g.clearGroups();
+    }
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!merged) continue;
+    merged.computeBoundingSphere();
+    const mesh = new THREE.Mesh(merged, b.mat);
+    mesh.castShadow = b.cast;
+    mesh.receiveShadow = b.recv;
+    for (const m of b.list) m.parent.remove(m);
+    root.add(mesh);
+  }
+  return root;
+}

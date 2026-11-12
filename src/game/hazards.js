@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { N, MAX_CLOCKS, TILE, ROAD_W } from '../config.js';
 import { NODES, T } from '../world/map.js';
 import { pick, mulberry32 } from '../util.js';
+import { mergeByMaterial } from '../world/builder.js';
 
 const shadow = (o) => { o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); return o; };
 
@@ -43,8 +44,10 @@ function buildBarrier(horizontal) {
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.2, 6), foot);
   post.position.set(0, 1.0, 0);
   g.add(sign, border, post);
+  shadow(g);
+  mergeByMaterial(g, (o) => o.userData.blink); // 25 -> 6 Draw-Calls, Blinklampen bleiben einzeln
   if (horizontal) g.rotation.y = Math.PI / 2;
-  return shadow(g);
+  return g;
 }
 
 // ---------- Leitkegel ----------
@@ -60,7 +63,7 @@ function buildCone() {
   const base = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.06, 0.6), coneMat);
   base.position.y = 0.03;
   g.add(c, s, base);
-  return shadow(g);
+  return mergeByMaterial(shadow(g));
 }
 
 // ---------- Power-Ups ----------

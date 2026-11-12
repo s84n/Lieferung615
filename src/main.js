@@ -8,13 +8,14 @@ import '@fontsource/exo-2/latin-800-italic.css';
 import '@fontsource/exo-2/latin-900-italic.css';
 import './styles.css';
 import * as THREE from 'three';
-import { ROUND_TIME, TILE, DEBUG } from './config.js';
+import { ROUND_TIME, TILE, DEBUG, QUALITY, FPS_CAP } from './config.js';
 import { loadImage, damp, mulberry32 } from './util.js';
 import { createRenderer, IsoCamera, createLights } from './render/renderer.js';
 import { createPost } from './render/post.js';
 import { CityMap } from './world/map.js';
 import { buildCity } from './world/city.js';
-import { Local } from './world/builder.js';
+import { Local, mergeByMaterial } from './world/builder.js';
+import { bakeAO, applyBakedAOTo } from './render/ao.js';
 import { setLogo, setElementsLogo, blobTexture, SKINS } from './world/textures.js';
 import { SkidMarks } from './world/skids.js';
 import { createGarage } from './render/garage.js';
@@ -86,7 +87,8 @@ async function boot() {
   const skids = new SkidMarks(scene);
   const garage = createGarage(renderer, SKINS, buildTruckModel);
 
-  // Geparkte LKW an den Lagern (Deko)
+  // Geparkte LKW an den Lagern (Deko, statisch -> je Material zu einem Mesh zusammengefasst)
+  const parked = [];
   for (const w of map.warehouses) {
     const b = w.block;
     const c0 = map.tileCenter(b.x0, b.z0);
@@ -99,9 +101,15 @@ async function boot() {
       m.position.set(x, 0.25, z);
       m.rotation.y = ry;
       m.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      mergeByMaterial(m);
       scene.add(m);
+      parked.push(m);
     }
   }
+  // Umgebungsverdeckung einmalig einbacken (ersetzt GTAO im Postprocessing)
+  const jibs = city.dynamic.cranes.map((c) => c.jib);
+  bakeAO(renderer, [city.root, ...parked], jibs);
+  applyBakedAOTo(city.root, jibs);
 
   const traffic = new Traffic(map, scene);
   traffic.spawnPeds(34);
@@ -358,6 +366,7 @@ async function boot() {
   });
 
   window.addEventListener('resize', () => {
+    renderer.setPixelRatio(dyn.pr);
     renderer.setSize(window.innerWidth, window.innerHeight);
     iso.resize();
     post.resize();
@@ -415,6 +424,7 @@ async function boot() {
   function carCollisions() {
     const circles = truck.circles();
     for (const car of traffic.cars) {
+      if (car.ghost > 0) continue; // Geist-Autos (Stau-Auflösung) sind durchfahrbar
       for (const c of circles) {
         const dx = c.x - car.pos.x, dz = c.z - car.pos.z;
         const d = Math.hypot(dx, dz);
@@ -447,6 +457,52 @@ async function boot() {
   }
 
   // ---------- Loop ----------
+  // Bildraten-Begrenzung: mehr als 60 Bilder/s bringen bei diesem Spiel nichts, kosten aber
+  // auf 120/144-Hz-Monitoren das 2–2,4-Fache an GPU-Leistung (?fps=0 schaltet die Grenze ab)
+  const FRAME_MS = FPS_CAP > 0 ? 1000 / FPS_CAP : 0;
+  let lastFrameTs = -1;
+
+  // Dynamische Auflösung: fällt die Bildrate, wird intern etwas kleiner gerendert (der Tilt-Shift
+  // kaschiert das). Hilft eine Absenkung nicht (z. B. CPU-Limit, 50-Hz-Monitor), wird sie zurückgenommen.
+  const MAX_PR = Math.min(window.devicePixelRatio || 1, QUALITY === 'low' ? 1 : 1.5);
+  const MIN_PR = Math.max(0.5, MAX_PR * 0.55);
+  const dyn = { pr: MAX_PR, acc: 0, n: 0, fast: 0, pending: null, block: 0, ceil: MAX_PR, ceilT: 0 };
+  function setPixelRatio(pr) {
+    dyn.pr = Math.round(pr * 100) / 100;
+    renderer.setPixelRatio(dyn.pr);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    post.resize();
+  }
+  function adaptResolution(realDt) {
+    if (realDt <= 0 || realDt > 0.25 || G.paused || G.state === 'garage') return; // Hänger/Tab-Wechsel ignorieren
+    dyn.acc += realDt; dyn.n++;
+    if (dyn.acc < 1) return;
+    const fps = dyn.n / dyn.acc;
+    dyn.acc = 0; dyn.n = 0;
+    dyn.block = Math.max(0, dyn.block - 1);
+    if (dyn.ceilT > 0 && --dyn.ceilT === 0) dyn.ceil = MAX_PR;
+    const target = FPS_CAP > 0 ? FPS_CAP : 60;
+    if (dyn.pending) {
+      // hat die letzte Absenkung etwas gebracht?
+      const p = dyn.pending;
+      dyn.pending = null;
+      if (fps < p.fps * 1.06) { setPixelRatio(p.from); dyn.block = 30; return; }
+    }
+    if (fps < target * 0.86 && dyn.pr > MIN_PR && dyn.block === 0) {
+      const from = dyn.pr;
+      setPixelRatio(Math.max(MIN_PR, dyn.pr * 0.85));
+      dyn.pending = { from, fps };
+      dyn.ceil = from; dyn.ceilT = 20; // 20 s lang nicht wieder auf die zu teure Stufe
+      dyn.fast = 0;
+    } else if (fps > target * 0.96 && dyn.pr < dyn.ceil) {
+      if (++dyn.fast >= 3) { setPixelRatio(Math.min(dyn.ceil, dyn.pr * 1.1)); dyn.fast = 0; }
+    } else dyn.fast = 0;
+  }
+
+  const ORIGIN = new THREE.Vector3();
+  const lookTarget = new THREE.Vector3();
+  const FAR_AWAY = { pos: new THREE.Vector2(9999, 9999), speed: 99 };
+  let miniAcc = 1;
   const timer = new THREE.Timer();
   timer.connect?.(document);
   const events = [];
@@ -457,9 +513,15 @@ async function boot() {
 
   function frame(ts) {
     requestAnimationFrame(frame);
+    if (FRAME_MS && lastFrameTs >= 0) {
+      const el = ts - lastFrameTs;
+      if (el < FRAME_MS - 2) return;
+      lastFrameTs = el > FRAME_MS * 3 ? ts : ts - (el % FRAME_MS);
+    } else lastFrameTs = ts;
     timer.update(ts);
-    const dt = G.paused ? 0 : Math.max(0, Math.min(timer.getDelta(), 1 / 20)) * TIME_SCALE;
-    if (G.paused) timer.getDelta();
+    const rawDt = timer.getDelta();
+    adaptResolution(rawDt);
+    const dt = G.paused ? 0 : Math.max(0, Math.min(rawDt, 1 / 20)) * TIME_SCALE;
     renderer.info.reset();
     G.time += dt;
     const t = G.time;
@@ -480,7 +542,7 @@ async function boot() {
     traffic.updatePeds(dt, t);
     hazards.update(dt, t, truck, playing);
     if (playing) orders.update(dt, t, truck);
-    else orders.update(0, t, { pos: new THREE.Vector2(9999, 9999), speed: 99 });
+    else orders.update(0, t, FAR_AWAY);
 
     for (const c of city.dynamic.cranes) c.jib.rotation.y = Math.sin(t * c.speed + c.phase) * 1.4;
     for (const f of city.dynamic.fountains) f.scale.y = 1 + Math.sin(t * 6) * 0.15;
@@ -493,7 +555,7 @@ async function boot() {
     // Kamera
     if (G.state === 'title' || G.state === 'tutorial' || G.state === 'results' || G.state === 'garage') {
       iso.orbit += dt * 0.06;
-      iso.follow(new THREE.Vector3(0, 0, 0), dt, 0.8);
+      iso.follow(ORIGIN, dt, 0.8);
       iso.setHeight(G.state === 'title' ? 76 : 60, dt, 1.5);
       post.setTilt(3.0, 0.16);
       lights.setShadowSize(70);
@@ -504,7 +566,7 @@ async function boot() {
       if (o > Math.PI) o -= Math.PI * 2;
       if (o < -Math.PI) o += Math.PI * 2;
       iso.orbit = damp(o, 0, 3, dt);
-      const look = new THREE.Vector3(truck.pos.x + truck.vel.x * 0.45, 0, truck.pos.y + truck.vel.y * 0.45);
+      const look = lookTarget.set(truck.pos.x + truck.vel.x * 0.45, 0, truck.pos.y + truck.vel.y * 0.45);
       iso.follow(look, dt, G.state === 'countdown' ? 2.5 : 4);
       iso.setHeight(30 + Math.abs(truck.speed) * 0.45, dt, G.state === 'countdown' ? 2 : 1.5);
       post.setTilt(2.4, 0.22);
@@ -575,7 +637,9 @@ async function boot() {
       const tgt = playing ? G.navTarget : null;
       hud.updateMarkers(playing || G.state === 'countdown' ? orders.targets() : [], iso.cam, truck, tgt);
       const waiting = (orders.active || []).filter((o) => o.state === 'waiting').map((o) => o.customer);
-      hud.drawMinimap(truck, orders.targets(), waiting, traffic.cars, hazards.powerups, map.blocked, G.navPath, t);
+      // Minimap mit 30 Hz zeichnen reicht völlig
+      miniAcc += rawDt;
+      if (miniAcc >= 1 / 30) { miniAcc = 0; hud.drawMinimap(truck, orders.targets(), waiting, traffic.cars, hazards.powerups, map.blocked, G.navPath, t); }
     }
     hud.updateFloats(dt, iso.cam);
 
@@ -588,7 +652,7 @@ async function boot() {
     if (debugEl) {
       fpsAcc += dt; fpsN++;
       if (fpsAcc > 0.5) {
-        debugEl.textContent = `${Math.round(fpsN / fpsAcc)} fps · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k · ${G.state}`;
+        debugEl.textContent = `${Math.round(fpsN / fpsAcc)} fps · ${dyn.pr.toFixed(2)}x · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k · ${G.state}`;
         fpsAcc = 0; fpsN = 0;
       }
     }
@@ -600,7 +664,7 @@ async function boot() {
   loading.classList.add('done');
   setTimeout(() => loading.remove(), 800);
 
-  if (DEBUG) window.__game = { G, truck, orders, hazards, traffic, map, iso, startRound, toTitle, renderer, PRODUCTS, hud, skids };
+  if (DEBUG) window.__game = { dyn, setPixelRatio, G, truck, orders, hazards, traffic, map, iso, startRound, toTitle, renderer, PRODUCTS, hud, skids };
 }
 
 boot().catch((err) => {

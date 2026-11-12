@@ -18,3 +18,5 @@ export const COLORS = {
 const params = new URLSearchParams(location.search);
 export const QUALITY = params.get('q') === 'low' ? 'low' : 'high';
 export const DEBUG = params.has('debug');
+// Bildraten-Grenze (?fps=0 = unbegrenzt, z. B. zum Messen)
+export const FPS_CAP = params.has('fps') ? Number(params.get('fps')) || 0 : 60;

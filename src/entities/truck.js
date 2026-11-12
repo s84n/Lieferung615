@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { logoPanelTexture, truckRearTexture, SKINS } from '../world/textures.js';
 import { clamp, damp } from '../util.js';
+import { mergeByMaterial } from '../world/builder.js';
 
 const RB = (w, h, d, r = 0.1, s = 3) => new RoundedBoxGeometry(w, h, d, s, r);
 const shadowed = (m) => { m.castShadow = true; m.receiveShadow = true; return m; };
@@ -109,6 +110,8 @@ export function buildTruckModel(skin = SKINS[0]) {
     wheels.push(w);
   }
 
+  // Aufbau-Teile je Material zusammenfassen: ~30 -> ~10 Draw-Calls (Räder bleiben einzeln, sie drehen sich)
+  mergeByMaterial(body);
   root.userData = { body, wheels, tailMat, headMat, skin: skin.id };
   return root;
 }
