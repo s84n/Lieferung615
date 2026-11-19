@@ -1,4 +1,4 @@
-// Lieferung615 – Bootstrap, Game-Loop und State-Machine
+// SHK Express (2026 Edition) – Bootstrap, Game-Loop und State-Machine
 import '@fontsource/exo-2/latin-400.css';
 import '@fontsource/exo-2/latin-600.css';
 import '@fontsource/exo-2/latin-700.css';

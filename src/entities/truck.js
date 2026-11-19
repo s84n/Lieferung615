@@ -15,7 +15,7 @@ const skinTex = new Map();
 function texturesFor(skin) {
   if (!skinTex.has(skin.id)) {
     skinTex.set(skin.id, {
-      side: logoPanelTexture(1024, 760, { stripe: true, sub: 'Lieferung615', bg: skin.body, logo: skin.logo, accent: skin.accent, logoScale: skin.logo === 'elements' ? 0.84 : 0.92 }),
+      side: logoPanelTexture(1024, 760, { stripe: true, sub: 'SHK Express', bg: skin.body, logo: skin.logo, accent: skin.accent, logoScale: skin.logo === 'elements' ? 0.84 : 0.92 }),
       rear: truckRearTexture({ bg: skin.body, text: skin.rear, accent: skin.accent }),
     });
   }

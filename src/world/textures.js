@@ -70,7 +70,7 @@ export function truckRearTexture({ bg = LOGO_RED, text = 'G&R', accent = '#f5b80
   g.textBaseline = 'middle';
   g.fillText(text, 256, 200);
   g.font = '700 46px "Exo 2", sans-serif';
-  g.fillText('Lieferung615', 256, 300);
+  g.fillText('SHK Express', 256, 300);
   // Warnstreifen
   for (let i = -2; i < 12; i++) {
     g.fillStyle = i % 2 ? accent : '#222';
