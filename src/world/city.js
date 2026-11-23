@@ -35,9 +35,14 @@ export function buildCity(map) {
   asphalt.receiveShadow = true;
   root.add(asphalt);
 
-  // Straßen-Markierungen
-  const roads = new StaticBuilder();
+  // Alles ohne Schattenwurf (Fahrbahnmarkierungen + flache Kleinteile aller Blöcke) sammelt flatAll;
+  // es wird am Ende stadtweit in wenige Kacheln zusammengefasst (wenige Draw-Calls, Frustum-Culling greift)
+  const flatAll = new StaticBuilder();
+
+  // Straßen-Markierungen (2 cm flach -> kein Schattenwurf)
+  const roads = flatAll;
   const half = ROAD_W / 2;
+  roads.flat(() => {
   for (let j = 0; j < NODES; j++) {
     for (let i = 0; i < NODES; i++) {
       for (const [di, dj] of [[1, 0], [0, 1]]) {
@@ -70,6 +75,7 @@ export function buildCity(map) {
       }
     }
   }
+  });
   // Begrenzung der Stadt (Hecke außen)
   const hs = size / 2 + 0.6;
   const hedge = new StaticBuilder();
@@ -78,23 +84,20 @@ export function buildCity(map) {
     hedge.rbox(1.0, 0.9, size + 2.4, '#4f8c3f', s * hs, 0, 0, 0, 0.3);
   }
   root.add(hedge.build(mat));
-  // Fahrbahnmarkierungen sind 2 cm flach: kein Schattenwurf nötig (spart Schatten-Durchgang)
-  const marks = roads.build(mat);
-  marks.castShadow = false;
-  root.add(marks);
-
-  // Blöcke
+  // Blöcke (schattenlose Kleinteile landen in flatAll)
   for (const b of map.blocks) {
-    const sb = new StaticBuilder();
+    const sb = new StaticBuilder(flatAll);
     buildBlock(sb, map, b, rng, root, dynamic);
     const m = sb.build(mat);
     if (m) root.add(m);
   }
+  root.add(flatAll.buildChunks(mat, 48)); // 3×3 Kacheln über die Stadt
 
   // Umland
   const out = new StaticBuilder();
   buildOutskirts(out, rng, size);
-  root.add(out.build(mat));
+  // in 8 Tortenstücke rund um die Stadt, damit nur der sichtbare Teil des Umlands gezeichnet wird
+  root.add(out.buildChunks(mat, 0, (x, z) => Math.floor((Math.atan2(z, x) + Math.PI) / (Math.PI / 4)) % 8));
 
   return { root, dynamic, material: mat };
 }
@@ -123,13 +126,13 @@ function buildBlock(sb, map, b, rng, root, dynamic) {
   const bcz = c0.z + (b.size - 1) * TILE / 2;
   const bw = b.size * TILE;
   // Bordsteinkante (an Einfahrten unterbrochen)
-  for (const t of tiles) {
+  sb.flat(() => { for (const t of tiles) {
     if (t.drive) continue;
     if (t.dz === 0) sb.box(TILE, 0.08, 0.3, P.curb, t.x, SLAB - 0.04, t.z - TILE / 2 + 0.15);
     if (t.dz === b.size - 1) sb.box(TILE, 0.08, 0.3, P.curb, t.x, SLAB - 0.04, t.z + TILE / 2 - 0.15);
     if (t.dx === 0) sb.box(0.3, 0.08, TILE, P.curb, t.x - TILE / 2 + 0.15, SLAB - 0.04, t.z);
     if (t.dx === b.size - 1) sb.box(0.3, 0.08, TILE, P.curb, t.x + TILE / 2 - 0.15, SLAB - 0.04, t.z);
-  }
+  } });
   void bw;
 
   // Laternen an den Ecken
@@ -176,7 +179,7 @@ function buildBlock(sb, map, b, rng, root, dynamic) {
 function lamp(sb, x, z) {
   sb.cyl(0.07, 2.6, '#4a525c', x, SLAB, z, 6);
   sb.box(0.5, 0.12, 0.22, '#4a525c', x, SLAB + 2.55, z);
-  sb.box(0.36, 0.06, 0.16, '#fff3c4', x, SLAB + 2.5, z);
+  sb.flat(() => sb.box(0.36, 0.06, 0.16, '#fff3c4', x, SLAB + 2.5, z));
 }
 
 function tree(L, lx, lz, rng, s = 1) {
@@ -191,15 +194,18 @@ function tree(L, lx, lz, rng, s = 1) {
   }
 }
 
-function lawn(L, col = P.lawn) { L.box(3.7, 0.04, 3.7, col, 0, SLAB, 0); }
+function lawn(L, col = P.lawn) { L.flat(() => L.box(3.7, 0.04, 3.7, col, 0, SLAB, 0)); }
 
+// Fenster liegen flach an der Wand -> kein Schattenwurf
 function windowRow(L, w, y, lz, count, col = P.glass, ww = 0.42, wh = 0.5, ox = 0, skip = null) {
-  for (let i = 0; i < count; i++) {
-    const lx = ox - w / 2 + (i + 0.5) * (w / count);
-    if (skip && skip(lx)) continue;
-    L.box(ww + 0.1, wh + 0.1, 0.06, '#ffffff', lx, y - 0.05, lz);
-    L.box(ww, wh, 0.08, col, lx, y, lz);
-  }
+  L.flat(() => {
+    for (let i = 0; i < count; i++) {
+      const lx = ox - w / 2 + (i + 0.5) * (w / count);
+      if (skip && skip(lx)) continue;
+      L.box(ww + 0.1, wh + 0.1, 0.06, '#ffffff', lx, y - 0.05, lz);
+      L.box(ww, wh, 0.08, col, lx, y, lz);
+    }
+  });
 }
 
 function heatPump(L, lx, lz, ry = 0) {
@@ -215,9 +221,11 @@ function house(L, rng) {
   L.rbox(w, h, d, wall, 0, SLAB, bz, 0, 0.08);
   L.roof(w + 0.3, 1.0 + rng() * 0.3, d + 0.4, roofc, 0, SLAB + h, bz);
   // Tür + Fenster
-  L.box(0.5, 0.9, 0.08, P.door, 0, SLAB, bz + d / 2 + 0.01);
+  L.flat(() => {
+    L.box(0.5, 0.9, 0.08, P.door, 0, SLAB, bz + d / 2 + 0.01);
+    L.box(0.08, 0.45, 0.45, P.glass, w / 2 + 0.02, SLAB + h * 0.55, bz);
+  });
   windowRow(L, w, SLAB + h * 0.55, bz + d / 2 + 0.02, 2, P.glass, 0.45, 0.45);
-  L.box(0.08, 0.45, 0.45, P.glass, w / 2 + 0.02, SLAB + h * 0.55, bz);
   // Kamin
   if (rng() < 0.6) L.box(0.3, 0.8, 0.3, '#9a5b48', w * 0.25, SLAB + h + 0.3, bz - 0.3);
   // Solar auf dem Dach
@@ -233,14 +241,16 @@ function house(L, rng) {
 }
 
 function shop(L, rng) {
-  L.box(3.8, 0.02, 3.8, '#c9c2b5', 0, SLAB, 0);
+  L.flat(() => L.box(3.8, 0.02, 3.8, '#c9c2b5', 0, SLAB, 0));
   const col = pick(P.shops, rng);
   const h = 2.4 + rng() * 0.6;
   L.rbox(3.3, h, 2.8, '#f2ede4', 0, SLAB, -0.4, 0, 0.06);
   L.box(3.4, 0.25, 2.9, col, 0, SLAB + h - 0.05, -0.4);
   // Schaufenster
-  L.box(2.4, 1.0, 0.08, P.glass, -0.3, SLAB + 0.35, 1.01);
-  L.box(0.5, 1.2, 0.08, P.door, 1.2, SLAB, 1.01);
+  L.flat(() => {
+    L.box(2.4, 1.0, 0.08, P.glass, -0.3, SLAB + 0.35, 1.01);
+    L.box(0.5, 1.2, 0.08, P.door, 1.2, SLAB, 1.01);
+  });
   // Markise
   L.add(boxGeo(3.1, 0.07, 0.8), col, 0, SLAB + 1.65, 1.3, 0, 0.35);
   windowRow(L, 3.0, SLAB + 2.1, 1.02, 3);
@@ -250,7 +260,7 @@ function shop(L, rng) {
 }
 
 function apartment(L, rng) {
-  L.box(3.8, 0.02, 3.8, '#c9c2b5', 0, SLAB, 0);
+  L.flat(() => L.box(3.8, 0.02, 3.8, '#c9c2b5', 0, SLAB, 0));
   const col = pick(P.apts, rng);
   const floors = 2 + Math.floor(rng() * 3);
   const h = floors * 1.15 + 0.4;
@@ -260,10 +270,10 @@ function apartment(L, rng) {
     const y = SLAB + 0.75 + f * 1.15;
     windowRow(L, 3.0, y, 1.21, 3);
     // Seitenfenster
-    for (const s of [-0.8, 0.4]) L.box(0.08, 0.5, 0.42, P.glass, 1.61, y, s);
+    L.flat(() => { for (const s of [-0.8, 0.4]) L.box(0.08, 0.5, 0.42, P.glass, 1.61, y, s); });
     if (f > 0 && rng() < 0.5) L.box(1.0, 0.08, 0.5, '#ffffff', 0, y - 0.35, 1.45);
   }
-  L.box(0.6, 0.9, 0.08, P.door, 0, SLAB, 1.21);
+  L.flat(() => L.box(0.6, 0.9, 0.08, P.door, 0, SLAB, 1.21));
   // Dach: Solar oder Lüftung
   if (rng() < 0.5) {
     for (let i = 0; i < 3; i++) L.add(boxGeo(0.8, 0.05, 0.6), '#22344f', -1 + i * 1.0, SLAB + h + 0.35, -0.6, 0, 0.5);
@@ -287,8 +297,10 @@ function backyard(L, rng, middle) {
   const r = rng();
   if (middle && r < 0.3) {
     // Pool
-    L.rbox(2.4, 0.1, 1.5, '#eeeeee', 0, SLAB, 0, 0, 0.05);
-    L.box(2.1, 0.11, 1.2, '#4fb6d8', 0, SLAB + 0.01, 0);
+    L.flat(() => {
+      L.rbox(2.4, 0.1, 1.5, '#eeeeee', 0, SLAB, 0, 0, 0.05);
+      L.box(2.1, 0.11, 1.2, '#4fb6d8', 0, SLAB + 0.01, 0);
+    });
     tree(L, 1.4, 1.4, rng, 0.8);
   } else if (r < 0.55) {
     tree(L, -0.8, -0.8, rng, 1);
@@ -301,8 +313,10 @@ function backyard(L, rng, middle) {
     tree(L, -1.0, 1.0, rng, 0.9);
   } else {
     // Gemüsebeet
-    for (let i = 0; i < 3; i++) L.box(2.4, 0.12, 0.4, '#6b4a2f', 0, SLAB, -0.8 + i * 0.8);
-    for (let i = 0; i < 3; i++) for (let k = 0; k < 5; k++) L.sphere(0.13, '#5fae4a', -1 + k * 0.5, SLAB + 0.2, -0.8 + i * 0.8, 0);
+    L.flat(() => {
+      for (let i = 0; i < 3; i++) L.box(2.4, 0.12, 0.4, '#6b4a2f', 0, SLAB, -0.8 + i * 0.8);
+      for (let i = 0; i < 3; i++) for (let k = 0; k < 5; k++) L.sphere(0.13, '#5fae4a', -1 + k * 0.5, SLAB + 0.2, -0.8 + i * 0.8, 0);
+    });
     tree(L, 1.3, 1.3, rng, 0.7);
   }
 }
@@ -337,17 +351,17 @@ function buildCustomer(sb, map, spot, rng, root, dynamic) {
   const ry = Math.atan2(spot.nx, spot.nz);
   const L = new Local(sb, c.x, c.z, ry); // lokales System: +z zeigt zur Straße, Anlieferspur bei (0,0), Vorplatz bei z = TILE
   // Vorplatz (3 Tiles breit) + Anlieferspur mit Bordsteinen
-  L.box(TILE * 3, 0.03, TILE, '#737a83', 0, 0, TILE);
-  L.box(TILE, 0.03, TILE, '#6b7079', 0, 0, 0);
+  L.flat(() => L.box(TILE * 3, 0.03, TILE, '#737a83', 0, 0, TILE));
+  L.flat(() => L.box(TILE, 0.03, TILE, '#6b7079', 0, 0, 0));
   for (const s of [-1, 1]) {
     L.box(0.25, SLAB, TILE, P.curb, s * 1.95, 0, 0);
     L.box(0.25, SLAB, TILE, P.curb, s * (TILE * 1.5 - 0.12), 0, TILE);
     L.box(TILE - 0.1, SLAB, 0.25, P.curb, s * TILE, 0, TILE / 2 + 0.1);
   }
   // Markierung: Haltelinie + Pfeil auf dem Vorplatz
-  L.box(3.0, 0.035, 0.18, '#f5b800', 0, 0, -1.7);
-  for (let i = 0; i < 5; i++) L.box(0.5, 0.035, 0.35, i % 2 ? '#2b2f36' : '#f5b800', -1.0 + i * 0.5, 0, -1.95);
-  L.box(0.25, 0.035, 1.4, '#e8e8e2', 0, 0, TILE + 0.6);
+  L.flat(() => L.box(3.0, 0.035, 0.18, '#f5b800', 0, 0, -1.7));
+  L.flat(() => { for (let i = 0; i < 5; i++) L.box(0.5, 0.035, 0.35, i % 2 ? '#2b2f36' : '#f5b800', -1.0 + i * 0.5, 0, -1.95); });
+  L.flat(() => L.box(0.25, 0.035, 1.4, '#e8e8e2', 0, 0, TILE + 0.6));
   L.add(boxGeo(0.25, 0.035, 0.7), '#e8e8e2', -0.22, 0, TILE - 0.2, 0, 0.7);
   L.add(boxGeo(0.25, 0.035, 0.7), '#e8e8e2', 0.22, 0, TILE - 0.2, 0, -0.7);
   // Rammpuffer am Gebäude/Anlieferplatz
@@ -355,7 +369,7 @@ function buildCustomer(sb, map, spot, rng, root, dynamic) {
 
   if (spot.type === 'site') {
     // Baustelle: Rohbau mit Gerüst, Bauzaun, Kran
-    L.box(TILE * 3 - 0.4, 0.04, TILE * 2 - 0.4, '#b59a72', 0, SLAB, -TILE / 2);
+    L.flat(() => L.box(TILE * 3 - 0.4, 0.04, TILE * 2 - 0.4, '#b59a72', 0, SLAB, -TILE / 2));
     const wx = -TILE, wz = -TILE;
     L.box(4.6, 0.3, 3.4, '#a6a6a6', wx, SLAB, wz);
     L.box(4.4, 1.8, 0.3, '#c96f4a', wx, SLAB + 0.3, wz - 1.5);
@@ -370,7 +384,7 @@ function buildCustomer(sb, map, spot, rng, root, dynamic) {
     L.cone(0.9, 0.7, '#e3c27f', TILE + 0.3, SLAB, -0.3 - TILE * 0.2, 10);
     L.cyl(0.35, 0.7, '#f28c28', -TILE + 0.8, SLAB, 0.6, 10, 0.25);
     // Anlieferplatz mit Paletten am Ende der Spur
-    L.box(3.4, 0.03, 1.6, '#c9b089', 0, SLAB, -3.0);
+    L.flat(() => L.box(3.4, 0.03, 1.6, '#c9b089', 0, SLAB, -3.0));
     for (const x of [-1.0, 0.2]) { L.box(1.0, 0.15, 0.8, '#c8a26b', x, SLAB, -3.1); L.box(0.9, 0.5, 0.7, '#cfd5da', x, SLAB + 0.15, -3.1); }
     // Bauzaun vorne
     for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
@@ -386,7 +400,7 @@ function buildCustomer(sb, map, spot, rng, root, dynamic) {
     signBoard(root, spot.name, ...L.tx(-3.75, 1.85), ry, 1.4, 2.6, { accent: '#f28c28', icon: '🏗' });
   } else if (spot.type === 'company') {
     // Handwerksbetrieb: Halle mit Rolltor + Transporter
-    L.box(TILE * 3 - 0.4, 0.03, TILE * 2 - 0.4, '#c9c2b5', 0, SLAB, -TILE / 2);
+    L.flat(() => L.box(TILE * 3 - 0.4, 0.03, TILE * 2 - 0.4, '#c9c2b5', 0, SLAB, -TILE / 2));
     L.rbox(8.6, 3.0, 4.2, '#e7eaee', -0.6, SLAB, -TILE - 0.6, 0, 0.08);
     L.box(8.7, 0.35, 4.3, '#2f6fb0', -0.6, SLAB + 2.72, -TILE - 0.6);
     // Anliefertor mittig zur Spur
@@ -404,7 +418,7 @@ function buildCustomer(sb, map, spot, rng, root, dynamic) {
     signBoard(root, spot.name, ...L.tx(-3.75, 1.85), ry, 1.6, 2.6, { accent: '#2f6fb0', icon: '🔧' });
   } else {
     // Gewerbe/öffentliches Gebäude
-    L.box(TILE * 3 - 0.4, 0.03, TILE * 2 - 0.4, '#d8d1c3', 0, SLAB, -TILE / 2);
+    L.flat(() => L.box(TILE * 3 - 0.4, 0.03, TILE * 2 - 0.4, '#d8d1c3', 0, SLAB, -TILE / 2));
     const col = pick(P.shops, rng);
     const h = 3.4 + rng() * 1.2;
     L.rbox(9.4, h, 4.4, '#f6f1e8', 0, SLAB, -TILE - 0.5, 0, 0.08);
@@ -468,14 +482,14 @@ function buildWarehouse(sb, map, b, bcx, bcz, rng, root) {
   const ry = Math.atan2(spot.nx, spot.nz);
   const L = new Local(sb, bcx, bcz, ry); // +z zur Einfahrt
   // Hof (mit Aussparung für die abgesenkte Zufahrt in der Mitte)
-  L.box(7.7, 0.03, 19.4, '#9a9c9f', -5.85, SLAB, 0);
-  L.box(7.7, 0.03, 19.4, '#9a9c9f', 5.85, SLAB, 0);
-  L.box(4.0, 0.03, 11.7, '#9a9c9f', 0, SLAB, -3.85);
+  L.flat(() => L.box(7.7, 0.03, 19.4, '#9a9c9f', -5.85, SLAB, 0));
+  L.flat(() => L.box(7.7, 0.03, 19.4, '#9a9c9f', 5.85, SLAB, 0));
+  L.flat(() => L.box(4.0, 0.03, 11.7, '#9a9c9f', 0, SLAB, -3.85));
   // Zufahrt: Tor-Tile + Spur bis zur Rampe, Bordsteine, Markierung
-  L.box(TILE, 0.03, TILE * 2, '#6b7079', 0, 0, 6);
+  L.flat(() => L.box(TILE, 0.03, TILE * 2, '#6b7079', 0, 0, 6));
   for (const s of [-1, 1]) L.box(0.25, SLAB, TILE * 2, P.curb, s * 1.95, 0, 6);
   for (let i = 0; i < 4; i++) L.box(0.18, 0.035, 0.9, '#f5b800', 0, 0, 3.0 + i * 1.8);
-  for (let i = 0; i < 5; i++) L.box(0.5, 0.035, 0.35, i % 2 ? '#2b2f36' : '#f5b800', -1.0 + i * 0.5, 0, 2.25);
+  L.flat(() => { for (let i = 0; i < 5; i++) L.box(0.5, 0.035, 0.35, i % 2 ? '#2b2f36' : '#f5b800', -1.0 + i * 0.5, 0, 2.25); });
   // Halle (Rampe endet genau an der Spur)
   const hw = 16, hd = 10, hh = 6.0, hz = -4.4;
   L.rbox(hw, hh, hd, '#eef0f2', 0, SLAB, hz, 0, 0.12);
@@ -539,10 +553,10 @@ function buildWarehouse(sb, map, b, bcx, bcz, rng, root) {
 
 function buildPark(sb, b, bcx, bcz, rng, root, dynamic) {
   const L = new Local(sb, bcx, bcz, 0);
-  L.box(19.4, 0.03, 19.4, '#93c962', 0, SLAB, 0);
+  L.flat(() => L.box(19.4, 0.03, 19.4, '#93c962', 0, SLAB, 0));
   // Wege
-  L.box(19.4, 0.04, 2.0, '#e2d6bd', 0, SLAB, 0);
-  L.box(2.0, 0.04, 19.4, '#e2d6bd', 0, SLAB, 0);
+  L.flat(() => L.box(19.4, 0.04, 2.0, '#e2d6bd', 0, SLAB, 0));
+  L.flat(() => L.box(2.0, 0.04, 19.4, '#e2d6bd', 0, SLAB, 0));
   L.cyl(4.0, 0.05, '#e2d6bd', 0, SLAB, 0, 24);
   // Brunnen
   L.cyl(2.2, 0.5, '#c9c2b5', 0, SLAB, 0, 24);
@@ -603,8 +617,10 @@ function buildOutskirts(sb, rng, size) {
     const F = new Local(sb, x, z, Math.floor(rng() * 2) * Math.PI / 2);
     // jedes Feld eine eigene Höhe, damit überlappende Felder nicht flackern (Z-Fighting)
     const fy = i * 0.012;
-    F.box(w, 0.06 + fy, d, col, 0, -0.03, 0);
-    for (let k = 0; k < Math.floor(d / 1.2); k++) F.box(w - 0.6, 0.05, 0.22, new THREE.Color(col).multiplyScalar(0.85).getStyle(), 0, 0.03 + fy - 0.01, -d / 2 + 0.6 + k * 1.2);
+    F.flat(() => {
+      F.box(w, 0.06 + fy, d, col, 0, -0.03, 0);
+      for (let k = 0; k < Math.floor(d / 1.2); k++) F.box(w - 0.6, 0.05, 0.22, new THREE.Color(col).multiplyScalar(0.85).getStyle(), 0, 0.03 + fy - 0.01, -d / 2 + 0.6 + k * 1.2);
+    });
   }
   // Baumgürtel
   for (let i = 0; i < 420; i++) {

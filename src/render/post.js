@@ -1,6 +1,7 @@
 // Postprocessing: Bloom, Tilt-Shift, Tonemapping, Farbstimmung + Körnung
-// Performance: nur 2 Vollbild-Durchgänge nach Bloom (Tonemapping+Tilt-H, Tilt-V+Farbstimmung),
-// MSAA nur auf dem Szenen-Puffer, Bloom in halber Auflösung, AO ist in die Stadt eingebacken (ao.js).
+// Performance: nach Bloom 3 Vollbild-Durchgänge (Tonemapping, Tilt-H, Tilt-V+Farbstimmung) –
+// das Tonemapping läuft so einmal statt 13× je Pixel. MSAA nur auf dem Szenen-Puffer (2× ab Pixeldichte
+// > 1,25, darüber ist das Bild ohnehin überabgetastet), Bloom in halber Auflösung, AO eingebacken (ao.js).
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -22,19 +23,16 @@ const TILT_COMMON = /* glsl */`
     return smoothstep(band * 0.5, band * 0.5 + 0.38, d) * amount;
   }`;
 
-// Durchgang 1: ACES-Tonemapping + sRGB je Tap (= frühere OutputPass), dann horizontal weichzeichnen
-const TiltToneShader = {
+// Durchgang 1: ACES-Tonemapping + sRGB (= frühere OutputPass), einmal je Pixel
+const ToneShader = {
   uniforms: {
     tDiffuse: { value: null },
-    resolution: { value: new THREE.Vector2(1, 1) },
-    dir: { value: new THREE.Vector2(1, 0) },
-    focus: { value: 0.5 }, band: { value: 0.22 }, amount: { value: 2.4 },
     toneMappingExposure: { value: 1 },
   },
   vertexShader: VERT,
   fragmentShader: /* glsl */`
-    ${TILT_COMMON}
-    uniform float toneMappingExposure;
+    uniform sampler2D tDiffuse; uniform float toneMappingExposure;
+    varying vec2 vUv;
     vec3 RRTAndODTFit(vec3 v) {
       vec3 a = v * (v + 0.0245786) - 0.000090537;
       vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
@@ -48,21 +46,35 @@ const TiltToneShader = {
       color = clamp(color, 0.0, 1.0);
       return mix(pow(color, vec3(0.41666)) * 1.055 - vec3(0.055), color * 12.92, vec3(lessThanEqual(color, vec3(0.0031308))));
     }
+    void main() { gl_FragColor = vec4(display(texture2D(tDiffuse, vUv).rgb), 1.0); }`,
+};
+
+// Durchgang 2: horizontal weichzeichnen (auf dem bereits tonegemappten Bild – Ergebnis wie vorher)
+const TiltHShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    resolution: { value: new THREE.Vector2(1, 1) },
+    dir: { value: new THREE.Vector2(1, 0) },
+    focus: { value: 0.5 }, band: { value: 0.22 }, amount: { value: 2.4 },
+  },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */`
+    ${TILT_COMMON}
     void main() {
       float b = tiltAmount();
-      if (b < 0.05) { gl_FragColor = vec4(display(texture2D(tDiffuse, vUv).rgb), 1.0); return; }
+      if (b < 0.05) { gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0); return; }
       vec3 sum = vec3(0.0); float ws = 0.0;
       for (int i = -6; i <= 6; i++) {
         float fi = float(i);
         float w = exp(-fi * fi / 18.0);
-        sum += display(texture2D(tDiffuse, vUv + dir * fi * b / resolution).rgb) * w;
+        sum += texture2D(tDiffuse, vUv + dir * fi * b / resolution).rgb * w;
         ws += w;
       }
       gl_FragColor = vec4(sum / ws, 1.0);
     }`,
 };
 
-// Durchgang 2: vertikal weichzeichnen + Farbstimmung, Vignette, Blitz, Körnung
+// Durchgang 3: vertikal weichzeichnen + Farbstimmung, Vignette, Blitz, Körnung
 const TiltGradeShader = {
   uniforms: {
     tDiffuse: { value: null },
@@ -128,8 +140,13 @@ export function createPost(renderer, scene, camera) {
   bloom.setSize = (w, h) => bloomSetSize(Math.max(2, Math.round(w / 2)), Math.max(2, Math.round(h / 2)));
   composer.addPass(bloom);
 
-  const tiltH = new ShaderPass(TiltToneShader);
+  const tone = new ShaderPass(ToneShader);
+  const tiltH = new ShaderPass(TiltHShader);
   const grade = new ShaderPass(TiltGradeShader);
+  // Der letzte Durchgang zeichnet direkt auf den Bildschirm: kein Puffertausch, sonst wechselte die
+  // Szene bei ungerader Tauschzahl jedes Bild zwischen MSAA- und Nicht-MSAA-Puffer
+  grade.needsSwap = false;
+  composer.addPass(tone);
   composer.addPass(tiltH);
   composer.addPass(grade);
   const tiltV = grade; // Tilt-V steckt jetzt im Farbstimmungs-Durchgang
@@ -139,18 +156,22 @@ export function createPost(renderer, scene, camera) {
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(window.innerWidth, window.innerHeight);
     for (const p of [tiltH, grade]) p.uniforms.resolution.value.set(s.x, s.y);
+    // MSAA an die Pixeldichte anpassen (dynamische Auflösung ändert sie zur Laufzeit)
+    const samples = QUALITY === 'low' ? 0 : renderer.getPixelRatio() > 1.25 ? 2 : 4;
+    const srt = composer.renderTarget2;
+    if (srt.samples !== samples) { srt.samples = samples; srt.dispose(); }
   }
   resize();
 
   return {
-    composer, bloom, tiltH, tiltV, grade, resize,
+    composer, bloom, tone, tiltH, tiltV, grade, resize,
     setCamera(cam) { renderPass.camera = cam; },
     setTilt(amount, band = 0.22) {
       for (const p of [tiltH, grade]) { p.uniforms.amount.value = amount; p.uniforms.band.value = band; }
     },
     render(dt, time) {
       grade.uniforms.time.value = time;
-      tiltH.uniforms.toneMappingExposure.value = renderer.toneMappingExposure;
+      tone.uniforms.toneMappingExposure.value = renderer.toneMappingExposure;
       composer.render(dt);
     },
   };

@@ -725,6 +725,25 @@ async function boot() {
     }
   }
 
+  // Alle Shader vorab kompilieren, solange der Ladebildschirm steht – sonst ruckelt es beim ersten
+  // Auftauchen von Cockpit, Power-ups, Geist-Autos, Bremsspuren usw. (Shader-Kompilierung im Spiel)
+  async function warmUpShaders() {
+    const hidden = [];
+    // parallel kompilieren, wenn der Browser das kann (sonst synchron, ohne three.js-Warnung)
+    const compile = renderer.extensions.has('KHR_parallel_shader_compile')
+      ? (sc, cam) => renderer.compileAsync(sc, cam) : (sc, cam) => renderer.compile(sc, cam);
+    scene.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    try {
+      await compile(scene, iso.cam);
+      // einmal komplett zeichnen: erfasst auch Schatten-Tiefen- und Postprocessing-Shader
+      for (const cam of [iso.cam, cockpit.camera]) { post.setCamera(cam); post.render(0, 0); }
+      await compile(garage.scene, garage.cam);
+    } catch (e) { console.warn('Shader-Vorkompilierung fehlgeschlagen', e); }
+    for (const o of hidden) o.visible = false;
+    post.setCamera(iso.cam);
+  }
+  await warmUpShaders();
+
   toTitle();
   requestAnimationFrame(frame);
   const loading = document.getElementById('loading');

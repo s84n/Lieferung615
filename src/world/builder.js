@@ -46,7 +46,13 @@ export function roofGeo(w, h, d) {
 }
 
 export class StaticBuilder {
-  constructor() { this.parts = []; }
+  // flatSink: anderer Builder, der die schattenlosen Teile sammelt (z. B. stadtweit in wenigen Kacheln
+  // statt je Block ein zweites Mesh -> keine zusätzlichen Draw-Calls)
+  constructor(flatSink = null) { this.parts = []; this.flatParts = []; this._flat = false; this.flatSink = flatSink; }
+
+  // Teile, die in fn() entstehen, werfen keinen Schatten (flach oder an der Wand: Fenster, Türen,
+  // Rasen, Bordsteine ...). Sie empfangen weiter Schatten, sparen aber Dreiecke im Schatten-Durchgang.
+  flat(fn) { const prev = this._flat; this._flat = true; fn(); this._flat = prev; return this; }
 
   add(geo, color, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
     let g = geo.index ? geo.toNonIndexed() : geo.clone();
@@ -61,7 +67,7 @@ export class StaticBuilder {
     for (let i = 0; i < n; i++) { col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.clearGroups();
-    this.parts.push(g);
+    (this._flat ? (this.flatSink || this).flatParts : this.parts).push(g);
     return this;
   }
 
@@ -73,17 +79,45 @@ export class StaticBuilder {
   cone(r, h, color, x, y, z, seg = 12) { return this.add(coneGeo(r, h, seg), color, x, y + h / 2, z); }
   roof(w, h, d, color, x, y, z, ry = 0) { return this.add(roofGeo(w, h, d), color, x, y, z, ry); }
 
+  // Ein Mesh (bzw. eine Gruppe: Schattenwerfer + schattenlose Teile)
   build(material) {
-    if (!this.parts.length) return null;
-    const geo = mergeGeometries(this.parts, false);
-    this.parts.forEach((p) => p.dispose());
-    this.parts = [];
-    geo.computeBoundingSphere();
-    const mesh = new THREE.Mesh(geo, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    return mesh;
+    const main = mergeParts(this.parts, material, true);
+    const flat = mergeParts(this.flatParts, material, false);
+    this.parts = []; this.flatParts = [];
+    if (main && flat) { const g = new THREE.Group(); g.add(main, flat); return g; }
+    return main || flat;
   }
+
+  // Wie build(), aber aufgeteilt, damit Frustum-Culling greift – für weitläufige Teile wie Umland oder
+  // Fahrbahnmarkierungen, die sonst immer komplett gezeichnet werden. key(x, z) ordnet ein Teil
+  // (nach seinem Mittelpunkt) einer Kachel zu; Standard: Raster mit Kantenlänge cell, um den Ursprung zentriert.
+  buildChunks(material, cell, key = (x, z) => `${Math.round(x / cell)},${Math.round(z / cell)}`) {
+    const g = new THREE.Group();
+    for (const [list, cast] of [[this.parts, true], [this.flatParts, false]]) {
+      const cells = new Map();
+      for (const part of list) {
+        part.computeBoundingBox();
+        part.boundingBox.getCenter(_p);
+        const k = key(_p.x, _p.z);
+        if (!cells.has(k)) cells.set(k, []);
+        cells.get(k).push(part);
+      }
+      for (const parts of cells.values()) g.add(mergeParts(parts, material, cast));
+    }
+    this.parts = []; this.flatParts = [];
+    return g;
+  }
+}
+
+function mergeParts(parts, material, cast) {
+  if (!parts.length) return null;
+  const geo = mergeGeometries(parts, false);
+  parts.forEach((p) => p.dispose());
+  geo.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.castShadow = cast;
+  mesh.receiveShadow = true;
+  return mesh;
 }
 
 // Lokale Transformation für Teile eines Gebäudes, das um ry gedreht an (ox, oz) steht
@@ -99,6 +133,7 @@ export class Local {
   sphere(r, col, lx, y, lz, detail = 1, sy = 1) { const [x, z] = this.tx(lx, lz); this.b.sphere(r, col, x, y, z, detail, sy); return this; }
   cone(r, h, col, lx, y, lz, seg = 12) { const [x, z] = this.tx(lx, lz); this.b.cone(r, h, col, x, y, z, seg); return this; }
   roof(w, h, d, col, lx, y, lz, ry = 0) { const [x, z] = this.tx(lx, lz); this.b.roof(w, h, d, col, x, y, z, this.ry + ry); return this; }
+  flat(fn) { this.b.flat(fn); return this; }
   add(geo, col, lx, y, lz, ry = 0, rx = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
     const [x, z] = this.tx(lx, lz); this.b.add(geo, col, x, y, z, this.ry + ry, rx, rz, sx, sy, sz); return this;
   }

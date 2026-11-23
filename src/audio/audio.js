@@ -29,9 +29,16 @@ export class GameAudio {
     this.settings = { ...DEFAULTS };
     try { Object.assign(this.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch { /* ohne Speicher */ }
     this.muted = !!this.settings.muted;
-    // Soundtrack schon vorab laden (Dekodieren erst, wenn der AudioContext existiert)
-    this.trackData = fetch(TRACK_URL).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
-    this.track = null;      // dekodierter AudioBuffer
+    // Soundtrack wird gestreamt (<audio> -> Web Audio) statt komplett dekodiert:
+    // spart ~70 MB Arbeitsspeicher (3 Minuten Stereo als Float32) und die Dekodierzeit beim Start
+    this.trackEl = new Audio();
+    this.trackEl.preload = 'auto';
+    this.trackEl.loop = true;
+    this.trackEl.src = TRACK_URL;
+    this.trackFailed = false;
+    this.trackEl.addEventListener('error', () => { this.trackFailed = true; this.track = null; });
+    this.trackEl.addEventListener('playing', () => { this.track = this.trackEl; });
+    this.track = null;      // gesetzt, sobald der Soundtrack läuft (sonst Synth-Ersatzmusik)
     this.trackSrc = null;
   }
 
@@ -56,7 +63,11 @@ export class GameAudio {
   }
 
   init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      if (this.trackSrc && this.trackEl.paused) this.trackEl.play().catch(() => {});
+      return;
+    }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     const ctx = this.ctx = new AC();
@@ -80,25 +91,20 @@ export class GameAudio {
     this.nextTime = ctx.currentTime + 0.1;
     this.timer = setInterval(() => this.schedule(), 25);
 
-    // Soundtrack dekodieren und als nahtlose Schleife starten
-    this.trackData.then((buf) => (buf ? ctx.decodeAudioData(buf) : null)).then((audioBuf) => {
-      if (!audioBuf) return;
-      this.track = audioBuf;
-      if (this.mode !== 'off') this.startTrack();
-    }).catch(() => { this.track = null; });
+    // Soundtrack als Schleife starten
+    if (this.mode !== 'off') this.startTrack();
   }
 
   startTrack() {
-    if (!this.track || this.trackSrc) return;
-    const src = this.ctx.createBufferSource();
-    src.buffer = this.track;
-    src.loop = true;
+    if (this.trackFailed || this.trackSrc) return;
+    let src;
+    try { src = this.ctx.createMediaElementSource(this.trackEl); } catch { this.trackFailed = true; return; }
     const g = this.ctx.createGain(); // sanftes Einblenden
     g.gain.setValueAtTime(0.0001, this.ctx.currentTime);
     g.gain.exponentialRampToValueAtTime(1, this.ctx.currentTime + 1.5);
     src.connect(g).connect(this.music);
-    src.start();
     this.trackSrc = src;
+    this.trackEl.play().catch(() => { /* Wiedergabe startet beim nächsten Klick über init() */ });
   }
 
   // ---- Diesel-Motor: Sechszylinder-Zündpulse, Nageln, Turbo, 5-Gang-Getriebe ----
